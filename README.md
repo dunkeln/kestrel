@@ -26,6 +26,7 @@ EvalSample(
     supervision="benchmark",
     chart_type=None,
     task_type="value_extraction",
+    tag="real",
     metadata={"source_type": "human_test"},
 )
 ```
@@ -35,6 +36,7 @@ Common fields:
 + `image` — PIL image when the dataset row provides image bytes; string reference when the dataset only provides archived image paths.
 + `answer_type` — one of `yes_no`, `numeric`, `text`, `multiple_choice`, `structure`.
 + `supervision` — one of `qa`, `classification`, `structure`, `benchmark`.
++ `tag` — `real` for benchmark/source datasets, `synthetic` for generated samples.
 + `chart_type` — chart family when provided by the dataset.
 + `task_type` — dataset-provided or inferred task label such as `value_extraction`, `arithmetic`, `yes_no`, `analysis`, or `structure_extraction`.
 

@@ -49,6 +49,7 @@ class FailureSliceLoader:
                 supervision=record.supervision,
                 chart_type=record.chart_type,
                 task_type=record.task_type,
+                tag=record.metadata.get("tag", "synthetic"),
                 metadata={
                     **record.metadata,
                     "prediction": record.prediction,
@@ -83,7 +84,7 @@ def failure_from_sample(
         chart_type=sample.chart_type,
         task_type=sample.task_type,
         error_type=error_type,
-        metadata=sample.metadata,
+        metadata={**sample.metadata, "tag": sample.tag},
     )
 
 

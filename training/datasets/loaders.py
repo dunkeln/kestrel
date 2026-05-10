@@ -121,6 +121,7 @@ def _adapt_chartqa(row):
         answer_type=infer_answer_type(answer),
         supervision="benchmark",
         task_type=infer_task_type(question),
+        tag="real",
         metadata={"source_type": row.get("type")},
     )
 
@@ -139,6 +140,7 @@ def _adapt_figureqa(row, source_index):
             answer_type=infer_answer_type(answer),
             supervision="qa",
             task_type=infer_task_type(question),
+            tag="real",
         )
 
 
@@ -153,6 +155,7 @@ def _adapt_plotqa(row, source_index):
         answer_type="structure",
         supervision="structure",
         task_type="structure_extraction",
+        tag="real",
     )
 
 
@@ -174,6 +177,7 @@ def _adapt_chartbench(row):
             supervision="benchmark",
             chart_type=chart_type,
             task_type=task_type,
+            tag="real",
             metadata={
                 "type": row.get("type"),
                 "image_ref": image_ref,
@@ -196,6 +200,7 @@ def _adapt_mmc_benchmark(row):
         answer_type=infer_answer_type(answer, has_options=bool(options)),
         supervision="benchmark",
         task_type=row.get("task") or infer_task_type(question),
+        tag="real",
         metadata={
             "options": options,
             "task": row.get("task"),

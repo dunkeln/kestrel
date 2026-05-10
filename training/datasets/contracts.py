@@ -3,6 +3,7 @@ from typing import Any, Literal
 
 AnswerType = Literal["yes_no", "numeric", "text", "multiple_choice", "structure"]
 SupervisionType = Literal["qa", "classification", "structure", "benchmark"]
+SampleTag = Literal["real", "synthetic"]
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,7 @@ class EvalSample:
     supervision: SupervisionType
     chart_type: str | None = None
     task_type: str | None = None
+    tag: SampleTag = "synthetic"
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
