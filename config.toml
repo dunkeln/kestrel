@@ -1,0 +1,17 @@
+[artifacts]
+root = "artifacts"
+pretrained = "artifacts/pretrained"
+evals = "artifacts/evals"
+datasets = "artifacts/datasets"
+
+[model]
+default_family = "qwen_vl"
+default_size = "tiny"
+default_precision = "mps"
+
+[datasets]
+default_streaming = true
+default_window_size = 32
+
+[inference]
+max_new_tokens = 64
