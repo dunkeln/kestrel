@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from prompts.system import get_system_prompt_for_sample
 from training.datasets.contracts import EvalSample
 
 Precision = Literal["auto", "float32", "float16", "bfloat16"]
@@ -26,12 +27,12 @@ class InferenceRequest:
     def from_eval_sample(
         cls,
         sample: EvalSample,
-        system_prompt: str,
+        system_prompt: str | None = None,
     ) -> "InferenceRequest":
         return cls(
             sample_id=sample.id,
             image=sample.image,
-            system_prompt=system_prompt,
+            system_prompt=system_prompt or get_system_prompt_for_sample(sample),
             prompt=sample.question,
             metadata={
                 "dataset": sample.dataset,

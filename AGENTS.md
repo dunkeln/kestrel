@@ -66,7 +66,7 @@ Preferred usage:
 from training.datasets.loaders import DatasetLoader
 
 loader = DatasetLoader("chartqa", streaming=True)
-samples = loader.window(offset=0, limit=32)
+samples = loader.batch(offset=0, limit=32)
 ```
 
 Do not reintroduce older public loader helpers unless there is a clear need.
@@ -114,7 +114,6 @@ Rules:
 
 ## Tests
 
-- Add tests when changing contracts, dataset adapters, failure egress/replay, or other shared behavior.
 - Root-level tests belong in `tests/`.
 - Prefer synthetic/local tests over network-dependent tests.
 - Use `tmp_path` for filesystem artifact tests.
@@ -134,7 +133,7 @@ Rules:
 
 ### Strictly Require Human Approval
 
-- Modify unrelated tests or broad test infrastructure.
+- Create and/or modify unrelated tests or broad test infrastructure.
 - Delete, rename, or move user-created files outside the requested scope.
 - Run destructive commands such as `rm`, `git reset`, or `git checkout --`.
 - Push commits, create branches, open PRs, or modify remote resources.

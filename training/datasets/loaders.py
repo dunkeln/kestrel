@@ -12,40 +12,95 @@ load_dotenv(find_dotenv())
 
 DATASET_CARDS = {
     "chartqa": {
-        "path": "docintel/ChartQA",
-        "split": "test",
+        "path": "HuggingFaceM4/ChartQA",
+        "splits": {
+            "train": "train",
+            "validation": "val",
+            "test": "test",
+        },
         "supervision": "benchmark",
     },
     "plotqa": {
         "path": "achang/plot_qa",
-        "split": "train",
+        "splits": {
+            "train": "train",
+            "validation": "validation",
+            "test": "test",
+        },
         "supervision": "structure",
     },
     "figureqa": {
         "path": "vikhyatk/figureqa",
-        "split": "train",
+        "splits": {
+            "train": "train",
+            "test": "train",
+        },
         "supervision": "qa",
     },
     "chartbench": {
         "path": "SincereX/ChartBench",
         "name": "chart_bench",
-        "split": "train_data",
+        "splits": {
+            "train": "train_data",
+            "test": "test_data",
+        },
         "supervision": "benchmark",
     },
     "mmc_benchmark": {
         "path": "xywang1/MMC",
         "name": "MMC-Benchmark",
-        "split": "test",
+        "splits": {
+            "train": "test",
+            "test": "test",
+        },
         "supervision": "benchmark",
     },
 }
+
+
+DEFAULT_SYSTEM_PROMPT = (
+    "Read the chart carefully. Answer only the question. Keep the answer concise."
+)
+
+TASK_SYSTEM_PROMPTS = {
+    "value_extraction": "Read the chart value requested. Return only the value.",
+    "arithmetic": "Compute from chart values. Return only the final answer.",
+    "global_extrema": "Find the requested maximum or minimum. Return only the answer.",
+    "yes_no": "Judge the chart statement. Answer only yes or no.",
+    "analysis": "Judge the chart statement against the image. Answer only true or false.",
+    "structure_extraction": "Extract the chart structure in the requested serialized format.",
+    "chart_reasoning": "Use visual chart evidence. Return a concise answer.",
+}
+
+ANSWER_TYPE_SYSTEM_PROMPTS = {
+    "yes_no": "Answer only yes or no.",
+    "numeric": "Return only the numeric answer.",
+    "multiple_choice": "Return only the selected option.",
+    "structure": "Return only the requested structured representation.",
+    "text": DEFAULT_SYSTEM_PROMPT,
+}
+
+
+def _system_prompt(task_type=None, answer_type=None):
+    if task_type in TASK_SYSTEM_PROMPTS:
+        return TASK_SYSTEM_PROMPTS[task_type]
+    if answer_type in ANSWER_TYPE_SYSTEM_PROMPTS:
+        return ANSWER_TYPE_SYSTEM_PROMPTS[answer_type]
+    return DEFAULT_SYSTEM_PROMPT
+
+
+def system_prompt(sample: EvalSample):
+    return _system_prompt(
+        task_type=sample.task_type,
+        answer_type=sample.answer_type,
+    )
 
 
 class DatasetLoader:
     def __init__(self, dataset_name, split=None, streaming=True):
         self.dataset_name = dataset_name
         self.dataset_card = DATASET_CARDS[dataset_name]
-        self.split = split or self.dataset_card["split"]
+        self.split = split or "train"
         self.streaming = streaming
 
     def raw(self):
@@ -59,7 +114,7 @@ class DatasetLoader:
                 source_index=source_index,
             )
 
-    def window(self, offset=0, limit=None):
+    def batch(self, offset=0, limit=None):
         dataset = self.raw()
         if offset:
             dataset = dataset.skip(offset)
@@ -79,8 +134,12 @@ class DatasetLoader:
             for key, value in self.dataset_card.items()
             if key in {"path", "name"}
         }
-        load_kwargs["split"] = self.split
+        load_kwargs["split"] = self._resolve_split()
         return load_kwargs
+
+    def _resolve_split(self):
+        splits = self.dataset_card["splits"]
+        return splits.get(self.split, self.split)
 
 
 def _stable_id(value):
@@ -110,10 +169,10 @@ def _adapt_row(dataset_name, row, source_index=None):
 
 
 def _adapt_chartqa(row):
-    question = row["question"]
-    answer = row["answer"]
+    question = row["query"]
+    answer = row["label"][0]
     return EvalSample(
-        id=f"chartqa:{row['id']}",
+        id=f"chartqa:{_stable_id([question, answer])}",
         dataset="chartqa",
         image=row["image"],
         question=question,
@@ -122,7 +181,7 @@ def _adapt_chartqa(row):
         supervision="benchmark",
         task_type=infer_task_type(question),
         tag="real",
-        metadata={"source_type": row.get("type")},
+        metadata={"source_type": row.get("human_or_machine")},
     )
 
 

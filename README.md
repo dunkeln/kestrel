@@ -113,13 +113,13 @@ PlotQA is structure supervision, not normal QA:
 }
 ```
 
-Use the loader API for windowed, no-store reads:
+Use the loader API for batched, no-store reads:
 
 ```python
 from training.datasets.loaders import DatasetLoader
 
 loader = DatasetLoader("chartqa", streaming=True)
-batch = list(loader.window(offset=0, limit=32))
+batch = list(loader.batch(offset=0, limit=32))
 ```
 
 ## Model
