@@ -94,17 +94,19 @@ def _decode_image(image):
 
 
 def _adapt_row(dataset_name, row, source_index=None):
-    if dataset_name == "chartqa":
-        return [_adapt_chartqa(row)]
-    if dataset_name == "figureqa":
-        return list(_adapt_figureqa(row, source_index))
-    if dataset_name == "plotqa":
-        return [_adapt_plotqa(row, source_index)]
-    if dataset_name == "chartbench":
-        return list(_adapt_chartbench(row))
-    if dataset_name == "mmc_benchmark":
-        return [_adapt_mmc_benchmark(row)]
-    raise KeyError(f"Unknown dataset: {dataset_name}")
+    match dataset_name:
+        case "chartqa":
+            return [_adapt_chartqa(row)]
+        case "figureqa":
+            return list(_adapt_figureqa(row, source_index))
+        case "plotqa":
+            return [_adapt_plotqa(row, source_index)]
+        case "chartbench":
+            return list(_adapt_chartbench(row))
+        case "mmc_benchmark":
+            return [_adapt_mmc_benchmark(row)]
+        case _:
+            raise KeyError(f"Unknown dataset: {dataset_name}")
 
 
 def _adapt_chartqa(row):
