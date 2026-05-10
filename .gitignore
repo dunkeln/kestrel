@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[oc]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyre/
+.coverage
+htmlcov/
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# uv
+.uv-cache/
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Project artifacts
+artifacts/
+outputs/
+checkpoints/
+runs/
+mlruns/
+
+# Logs
+*.log
+logs/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
