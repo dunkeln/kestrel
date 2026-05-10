@@ -41,6 +41,7 @@ logs/
 
 # Notebooks
 .ipynb_checkpoints/
+notebook.py
 
 # OS/editor
 .DS_Store

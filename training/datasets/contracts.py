@@ -24,7 +24,7 @@ def infer_answer_type(answer: Any, has_options: bool = False) -> AnswerType:
         return "multiple_choice"
 
     answer_text = str(answer).strip().lower().rstrip("!.?")
-    if answer_text in {"yes", "no"}:
+    if answer_text in {"yes", "no", "true", "false"}:
         return "yes_no"
 
     try:
