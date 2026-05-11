@@ -11,6 +11,12 @@ Judge-VLM capable of judging other VLMs' outputs on chart reasoning.
 + ChartBench — specifically for chart understanding evaluation
 + MMC-Benchmark — multi-task chart comprehension
 
+### Current Pretrained Qwen-VL Bench
+
+Current typed exact-match accuracy across 256 normalized test samples per benchmark, using the pretrained Qwen-VL base model.
+
+![Qwen-VL wide bench accuracy](assets/wide_bench_accuracy.png)
+
 ### Dataset Contract
 
 Dataset rows are normalized into `EvalSample` objects from `training/datasets/contracts.py`.

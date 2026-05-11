@@ -47,6 +47,7 @@ class InferenceRequest:
 class InferenceConfig:
     precision: Precision = "auto"
     max_new_tokens: int = 128
+    image_max_pixels: int = 1_003_520
 
 
 @dataclass(frozen=True)

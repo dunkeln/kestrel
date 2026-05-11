@@ -30,6 +30,12 @@ env/
 
 # Project artifacts
 artifacts/
+!artifacts/
+artifacts/*
+!artifacts/evals/
+artifacts/evals/*
+!artifacts/evals/bench/
+!artifacts/evals/bench/*.jsonl
 outputs/
 checkpoints/
 runs/

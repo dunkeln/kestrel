@@ -14,5 +14,5 @@ default_window_size = 32
 
 [inference]
 precision = "auto"
-adapter_path = ""
 max_new_tokens = 64
+image_max_pixels = 1003520

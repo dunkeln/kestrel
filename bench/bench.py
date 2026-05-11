@@ -1,18 +1,46 @@
 import json
 from dataclasses import asdict, dataclass, field
+from itertools import islice
 from pathlib import Path
 from typing import Any, Iterable, Protocol
 
 import click
+from rich.console import Console
+from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
+from rich.table import Table
 
 from inference.contracts import InferenceRequest, InferenceResult
-from inference.local_mps.qwenvl import build_backend
+from inference.backends.pytorch_qwenvl import QwenVlBackend
 from training.datasets.contracts import AnswerType, EvalSample
+from training.datasets.images import (
+    MissingSampleImageError,
+    resolve_sample_image as resolve_dataset_sample_image,
+)
 from training.datasets.loaders import DatasetLoader, system_prompt
 
 
 class InferenceCompatibleModel(Protocol):
     def predict(self, request: InferenceRequest) -> InferenceResult:
+        ...
+
+
+class BenchReporter(Protocol):
+    def start(self) -> None:
+        ...
+
+    def advance(self, record: "BenchRecord") -> None:
+        ...
+
+    def stop(self) -> None:
         ...
 
 
@@ -48,16 +76,21 @@ def run_bench(
     *,
     dataset: str,
     split: str = "test",
-    samples: int,
+    samples: int | None,
     batch_size: int,
     output_path: Path | None = None,
+    reporter: BenchReporter | None = None,
 ) -> BenchSummary:
     loader = DatasetLoader(dataset, split=split, streaming=True)
+    sample_stream = loader.batch(offset=0, limit=None)
+    if samples is not None:
+        sample_stream = islice(sample_stream, samples)
     return run_samples(
         model,
-        loader.batch(offset=0, limit=samples),
+        sample_stream,
         batch_size=batch_size,
         output_path=output_path,
+        reporter=reporter,
     )
 
 
@@ -67,6 +100,7 @@ def run_samples(
     *,
     batch_size: int,
     output_path: Path | None = None,
+    reporter: BenchReporter | None = None,
 ) -> BenchSummary:
     if batch_size <= 0:
         raise ValueError("batch_size must be greater than 0.")
@@ -77,32 +111,41 @@ def run_samples(
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text("")
 
-    for sample_batch in _chunks(samples, batch_size):
-        for sample in sample_batch:
-            request = request_from_sample(sample)
-            result = model.predict(request)
-            score = score_prediction(
-                answer_type=sample.answer_type,
-                gold=sample.answer,
-                prediction=result.prediction,
-            )
-            record = BenchRecord(
-                sample_id=sample.id,
-                dataset=sample.dataset,
-                answer_type=sample.answer_type,
-                gold=sample.answer,
-                prediction=result.prediction,
-                correct=score.correct,
-                latency_ms=_latency_ms(result.metadata),
-                metadata={
-                    "chart_type": sample.chart_type,
-                    "task_type": sample.task_type,
-                    "result": result.metadata,
-                },
-            )
-            records.append(record)
-            if output_path is not None:
-                _append_jsonl(output_path, record)
+    if reporter is not None:
+        reporter.start()
+
+    try:
+        for sample_batch in _chunks(samples, batch_size):
+            for sample in sample_batch:
+                request = request_from_sample(sample)
+                result = model.predict(request)
+                score = score_prediction(
+                    answer_type=sample.answer_type,
+                    gold=sample.answer,
+                    prediction=result.prediction,
+                )
+                record = BenchRecord(
+                    sample_id=sample.id,
+                    dataset=sample.dataset,
+                    answer_type=sample.answer_type,
+                    gold=sample.answer,
+                    prediction=result.prediction,
+                    correct=score.correct,
+                    latency_ms=_latency_ms(result.metadata),
+                    metadata={
+                        "chart_type": sample.chart_type,
+                        "task_type": sample.task_type,
+                        "result": result.metadata,
+                    },
+                )
+                records.append(record)
+                if output_path is not None:
+                    _append_jsonl(output_path, record)
+                if reporter is not None:
+                    reporter.advance(record)
+    finally:
+        if reporter is not None:
+            reporter.stop()
 
     return summarize(records)
 
@@ -110,7 +153,7 @@ def run_samples(
 def request_from_sample(sample: EvalSample) -> InferenceRequest:
     return InferenceRequest(
         sample_id=sample.id,
-        image=sample.image,
+        image=resolve_sample_image(sample),
         system_prompt=system_prompt(sample),
         prompt=sample.question,
         metadata={
@@ -120,6 +163,13 @@ def request_from_sample(sample: EvalSample) -> InferenceRequest:
             "task_type": sample.task_type,
         },
     )
+
+
+def resolve_sample_image(
+    sample: EvalSample,
+    dataset_root: Path = Path("artifacts/datasets"),
+) -> Any:
+    return resolve_dataset_sample_image(sample, dataset_root=dataset_root)
 
 
 def score_prediction(
@@ -173,7 +223,7 @@ def _normalize_yes_no(value: str) -> str:
 
 
 def _normalize_text(value: str) -> str:
-    return " ".join(str(value).strip().lower().split())
+    return " ".join(str(value).strip().lower().strip(" \t\r\n.!?").split())
 
 
 def _latency_ms(metadata: dict[str, Any]) -> float | None:
@@ -199,11 +249,84 @@ def _chunks(samples: Iterable[EvalSample], batch_size: int):
         yield batch
 
 
+class RichBenchReporter:
+    def __init__(
+        self,
+        *,
+        console: Console,
+        dataset: str,
+        split: str,
+        sample_limit: int | None,
+        batch_size: int,
+    ):
+        self.console = console
+        self.dataset = dataset
+        self.split = split
+        self.sample_limit = sample_limit
+        self.batch_size = batch_size
+        self.correct = 0
+        self.total = 0
+        self.progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[bold]bench[/bold]"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            console=console,
+        )
+        self.task_id = None
+
+    def start(self) -> None:
+        sample_text = "all samples" if self.sample_limit is None else str(self.sample_limit)
+        self.console.print(
+            f"[bold]dataset[/bold]={self.dataset} [bold]split[/bold]={self.split} "
+            f"[bold]samples[/bold]={sample_text} [bold]batch_size[/bold]={self.batch_size}"
+        )
+        total = self.sample_limit if self.sample_limit is not None else None
+        self.progress.start()
+        self.task_id = self.progress.add_task("bench", total=total)
+
+    def advance(self, record: BenchRecord) -> None:
+        self.total += 1
+        self.correct += int(record.correct)
+        accuracy = self.correct / self.total if self.total else 0.0
+        assert self.task_id is not None
+        self.progress.update(
+            self.task_id,
+            advance=1,
+            description=f"accuracy {accuracy:.2%}",
+        )
+
+    def stop(self) -> None:
+        self.progress.stop()
+
+
+def render_summary(
+    *,
+    console: Console,
+    summary: BenchSummary,
+    output_path: Path | None,
+) -> None:
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold")
+    table.add_column()
+    table.add_row("total", str(summary.total))
+    table.add_row("correct", str(summary.correct))
+    table.add_row("accuracy", f"{summary.accuracy:.2%}")
+    if summary.average_latency_ms is not None:
+        table.add_row("avg latency", f"{summary.average_latency_ms:.1f} ms")
+    if output_path is not None:
+        table.add_row("records", str(output_path))
+    console.print(Panel(table, title="bench summary", expand=False))
+
+
 @click.command()
 @click.option("--dataset", default="chartqa", show_default=True)
 @click.option("--split", default="test", show_default=True)
 @click.option("--batch-size", default=32, show_default=True, type=int)
-@click.option("--samples", required=True, type=int)
+@click.option("--samples", type=int)
+@click.option("--all-samples", is_flag=True)
 @click.option(
     "--config",
     default=Path("config.toml"),
@@ -218,21 +341,42 @@ def main(
     dataset: str,
     split: str,
     batch_size: int,
-    samples: int,
+    samples: int | None,
+    all_samples: bool,
     config: Path,
     output_path: Path | None,
 ) -> None:
     """Run a small Kestrel inference bench."""
-    model = build_backend(config)
+    sample_limit = _resolve_sample_limit(samples=samples, all_samples=all_samples)
+    console = Console()
+    reporter = RichBenchReporter(
+        console=console,
+        dataset=dataset,
+        split=split,
+        sample_limit=sample_limit,
+        batch_size=batch_size,
+    )
+    model = QwenVlBackend.from_config(config)
     summary = run_bench(
         model,
         dataset=dataset,
         split=split,
-        samples=samples,
+        samples=sample_limit,
         batch_size=batch_size,
         output_path=output_path,
+        reporter=reporter,
     )
-    click.echo(json.dumps(asdict(summary), sort_keys=True))
+    render_summary(console=console, summary=summary, output_path=output_path)
+
+
+def _resolve_sample_limit(samples: int | None, all_samples: bool) -> int | None:
+    if samples is None and not all_samples:
+        raise click.UsageError("Pass exactly one of --samples or --all-samples.")
+    if samples is not None and all_samples:
+        raise click.UsageError("Pass exactly one of --samples or --all-samples.")
+    if samples is not None and samples <= 0:
+        raise click.UsageError("--samples must be greater than 0.")
+    return samples
 
 
 if __name__ == "__main__":

@@ -41,6 +41,7 @@ def load_inference_settings(config_path: Path = Path("config.toml")) -> Inferenc
         config=InferenceConfig(
             precision=precision,
             max_new_tokens=int(inference.get("max_new_tokens", 128)),
+            image_max_pixels=int(inference.get("image_max_pixels", 1_003_520)),
         ),
     )
 
