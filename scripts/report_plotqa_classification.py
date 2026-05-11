@@ -7,7 +7,7 @@ from rich.console import Console
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from bench.plotqa_report import (
+from bench.plotqa_structure_report import (
     classify_plotqa_record,
     render_plotqa_classification_report,
 )
@@ -20,7 +20,7 @@ from bench.scorers import score_prediction
     type=click.Path(path_type=Path, dir_okay=False, exists=True),
 )
 def main(jsonl_path: Path) -> None:
-    """Print a PlotQA classification report from a bench JSONL file."""
+    """Print a PlotQA-structure classification report from a bench JSONL file."""
     records = _read_records(jsonl_path)
     classified = []
     for record in records:
@@ -28,6 +28,8 @@ def main(jsonl_path: Path) -> None:
             answer_type="structure",
             gold=record["gold"],
             prediction=record["prediction"],
+            dataset="plotqa_structure",
+            task_type="structure_extraction",
         )
         classified.append(
             classify_plotqa_record(
@@ -49,9 +51,17 @@ def _read_records(path: Path) -> list[dict]:
     if not records:
         raise click.ClickException(f"No bench records found in {path}.")
 
+    for index, record in enumerate(records, start=1):
+        if "dataset" not in record:
+            raise click.ClickException(
+                f"Record {index} in {path} is missing the `dataset` key."
+            )
+
     datasets = {record["dataset"] for record in records}
-    if datasets != {"plotqa"}:
-        raise click.ClickException(f"Expected only PlotQA records in {path}; found {sorted(datasets)}.")
+    if datasets != {"plotqa_structure"}:
+        raise click.ClickException(
+            f"Expected only PlotQA-structure records in {path}; found {sorted(datasets)}."
+        )
     return records
 
 

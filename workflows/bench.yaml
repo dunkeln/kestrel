@@ -141,13 +141,13 @@ datasets:
     - chartbench
     - mmc_benchmark
   structured:
-    - plotqa
+    - plotqa_structure
 
 artifact_layout:
   config: artifacts/evals/bench/configs/{run_prefix}_{artifact_suffix}_{model_size}_{device}_{precision}.toml
   jsonl: artifacts/evals/bench/{run_prefix}_{artifact_suffix}_{model_size}_{device}_{precision}_{dataset}_{split}_{samples}.jsonl
   wide_plot: assets/{run_prefix}_{artifact_suffix}_{model_size}_{device}_{precision}_wide_bench_accuracy
-  plotqa_plot: assets/{run_prefix}_{artifact_suffix}_{model_size}_{device}_{precision}_plotqa_breakdown
+  plotqa_structure_plot: assets/{run_prefix}_{artifact_suffix}_{model_size}_{device}_{precision}_plotqa_structure_breakdown
 
 generated_config_template:
   path: artifacts/evals/bench/configs/{run_prefix}_{artifact_suffix}_{model_size}_{device}_{precision}.toml
@@ -180,7 +180,7 @@ notes:
   - device is part of artifact names for reproducibility. The current inference config does not consume device directly.
   - Codex should reject device=cuda if the target environment has no CUDA GPU.
   - Output paths include artifact_suffix, model_size, device, and precision to avoid collisions.
-  - PlotQA prints its classification report directly from bench.bench.
+  - PlotQA-structure prints its classification report directly from bench.bench.
   - Codex should create generated_config_template.path directly from generated_config_template.content.
 
 steps:
@@ -210,7 +210,7 @@ steps:
       --config artifacts/evals/bench/configs/{run_prefix}_{artifact_suffix}_{model_size}_{device}_{precision}.toml
       --output-path artifacts/evals/bench/{run_prefix}_{artifact_suffix}_{model_size}_{device}_{precision}_{dataset}_{split}_{samples}.jsonl
 
-  - name: run-plotqa-bench
+  - name: run-plotqa-structure-bench
     for_each:
       model_size: model_sizes
       dataset: datasets.structured
@@ -240,9 +240,9 @@ steps:
     for_each: model_size
     run: >-
       uv run python scripts/plot_plotqa_breakdown.py
-      artifacts/evals/bench/{run_prefix}_{artifact_suffix}_{model_size}_{device}_{precision}_plotqa_{split}_{samples}.jsonl
+      artifacts/evals/bench/{run_prefix}_{artifact_suffix}_{model_size}_{device}_{precision}_plotqa_structure_{split}_{samples}.jsonl
       --label "Qwen-VL {model_size} {artifact_suffix}"
-      --title "PlotQA Structured Extraction Breakdown"
+      --title "PlotQA-Structure Extraction Breakdown"
       --subtitle "Qwen-VL {model_size}, {artifact_suffix}, device={device}, precision={precision}, {samples} normalized {split} samples"
       --output-dir assets
-      --output-name {run_prefix}_{artifact_suffix}_{model_size}_{device}_{precision}_plotqa_breakdown
+      --output-name {run_prefix}_{artifact_suffix}_{model_size}_{device}_{precision}_plotqa_structure_breakdown

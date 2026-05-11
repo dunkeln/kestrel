@@ -12,7 +12,7 @@ from rich.console import Console
 from inference.contracts import InferenceRequest, InferenceResult
 from training.datasets.contracts import EvalSample
 from training.datasets import images as dataset_images
-from training.datasets.loaders import _adapt_plotqa
+from training.datasets.loaders import _adapt_plotqa_structure
 
 from bench.bench import (
     BenchRecord,
@@ -161,7 +161,7 @@ def test_request_from_sample_uses_sample_specific_system_prompt():
 
 
 def test_plotqa_sample_prompt_includes_serialized_schema():
-    sample = _adapt_plotqa(
+    sample = _adapt_plotqa_structure(
         {
             "image": "plot.png",
             "text": "<s><s_y>1</s_y><s_x>0</s_x><s_name>A</s_name></s>",
@@ -367,8 +367,8 @@ def test_render_dataset_report_prints_plotqa_classification_report():
         average_score=0.0,
         records=(
             BenchRecord(
-                sample_id="plotqa:1",
-                dataset="plotqa",
+                sample_id="plotqa_structure:1",
+                dataset="plotqa_structure",
                 answer_type="structure",
                 gold="<s><s_x>0</s_x><s_y>1</s_y><s_name>A</s_name></s>",
                 prediction="<s><series><sep/></series></s>",
@@ -399,13 +399,13 @@ def test_render_dataset_report_prints_plotqa_classification_report():
 
     render_dataset_report(
         console=console,
-        dataset="plotqa",
+        dataset="plotqa_structure",
         summary=summary,
         output_path=None,
     )
 
     rendered = output.getvalue()
-    assert "PlotQA Classification Report" in rendered
+    assert "PlotQA Structure Classification Report" in rendered
     assert "prediction parse" in rendered
     assert "unparsed_schema_variant" in rendered
 
@@ -481,6 +481,8 @@ def test_score_prediction_scores_plotqa_structure_facts():
         answer_type="structure",
         gold=gold,
         prediction=prediction,
+        dataset="plotqa_structure",
+        task_type="structure_extraction",
     )
 
     assert score.correct is True
@@ -502,6 +504,8 @@ def test_score_prediction_gives_plotqa_partial_credit():
         answer_type="structure",
         gold=gold,
         prediction=prediction,
+        dataset="plotqa_structure",
+        task_type="structure_extraction",
     )
 
     assert score.correct is False
@@ -531,6 +535,8 @@ def test_score_prediction_ignores_plotqa_bbox_tags():
         answer_type="structure",
         gold=gold,
         prediction=prediction,
+        dataset="plotqa_structure",
+        task_type="structure_extraction",
     )
 
     assert score.correct is True
@@ -553,6 +559,8 @@ def test_score_prediction_handles_plotqa_horizontal_bar_structure():
         answer_type="structure",
         gold=gold,
         prediction=prediction,
+        dataset="plotqa_structure",
+        task_type="structure_extraction",
     )
 
     assert score.correct is True
@@ -571,6 +579,8 @@ def test_score_prediction_accepts_unambiguous_plotqa_series_variant():
         answer_type="structure",
         gold=gold,
         prediction=prediction,
+        dataset="plotqa_structure",
+        task_type="structure_extraction",
     )
 
     assert score.correct is True
@@ -599,6 +609,8 @@ def test_score_prediction_rejects_plotqa_placeholders():
         answer_type="structure",
         gold=gold,
         prediction=prediction,
+        dataset="plotqa_structure",
+        task_type="structure_extraction",
     )
 
     assert score.correct is False

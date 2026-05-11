@@ -1,7 +1,8 @@
 import re
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
 
 from rich.console import Console
 from rich.table import Table
@@ -11,8 +12,11 @@ from rich.table import Table
 class ClassifiedPlotQARecord:
     score: float
     bucket: str
-    metadata: dict[str, Any]
+    metadata: Mapping[str, Any]
     prediction: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
 
 
 def classify_plotqa_record(
@@ -122,7 +126,7 @@ def render_plotqa_classification_report(
         grid.add_column()
     grid.add_row(*section_tables)
 
-    report_console.rule(f"[bold]PlotQA Classification Report[/bold] {title}")
+    report_console.rule(f"[bold]PlotQA Structure Classification Report[/bold] {title}")
     report_console.print(grid)
 
 

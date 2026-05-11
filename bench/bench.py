@@ -20,7 +20,8 @@ from rich.table import Table
 
 from inference.contracts import InferenceRequest, InferenceResult
 from inference.backends.pytorch_qwenvl import QwenVlBackend
-from bench.plotqa_report import (
+from bench.plotqa_qa_report import render_plotqa_qa_report
+from bench.plotqa_structure_report import (
     classify_plotqa_record,
     render_plotqa_classification_report,
 )
@@ -124,6 +125,8 @@ def run_samples(
                     answer_type=sample.answer_type,
                     gold=sample.answer,
                     prediction=result.prediction,
+                    dataset=sample.dataset,
+                    task_type=sample.task_type,
                 )
                 record = BenchRecord(
                     sample_id=sample.id,
@@ -295,23 +298,28 @@ def render_dataset_report(
     summary: BenchSummary,
     output_path: Path | None,
 ) -> None:
-    if dataset != "plotqa":
-        return
-
-    classified = [
-        classify_plotqa_record(
-            score=record.score,
-            metadata=record.metadata.get("score", {}),
-            prediction=record.prediction,
-        )
-        for record in summary.records
-    ]
     title = str(output_path) if output_path is not None else "current run"
-    render_plotqa_classification_report(
-        console=console,
-        records=classified,
-        title=title,
-    )
+    match dataset:
+        case "plotqa_structure":
+            classified = [
+                classify_plotqa_record(
+                    score=record.score,
+                    metadata=record.metadata.get("score", {}),
+                    prediction=record.prediction,
+                )
+                for record in summary.records
+            ]
+            render_plotqa_classification_report(
+                console=console,
+                records=classified,
+                title=title,
+            )
+        case "plotqa_qa":
+            render_plotqa_qa_report(
+                console=console,
+                records=[asdict(record) for record in summary.records],
+                title=title,
+            )
 
 
 @click.command()

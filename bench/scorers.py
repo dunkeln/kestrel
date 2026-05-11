@@ -3,7 +3,8 @@ from typing import Any
 
 from training.datasets.contracts import AnswerType
 
-from bench.plotqa_scorer import score_plotqa_structure
+from bench.plotqa_qa_scorer import score_plotqa_qa
+from bench.plotqa_structure_scorer import score_plotqa_structure
 
 
 @dataclass(frozen=True)
@@ -20,15 +21,32 @@ def score_prediction(
     answer_type: AnswerType,
     gold: str,
     prediction: str,
+    dataset: str | None = None,
+    task_type: str | None = None,
 ) -> Score:
-    if answer_type == "structure":
+    if dataset == "plotqa_structure":
         plotqa_score = score_plotqa_structure(gold, prediction)
         return Score(
             correct=plotqa_score.score == 1.0,
             expected="plotqa_structure",
             actual="plotqa_structure",
             score=plotqa_score.score,
-            metadata=plotqa_score.metadata,
+            metadata=dict(plotqa_score.metadata),
+        )
+
+    if dataset == "plotqa_qa":
+        plotqa_score = score_plotqa_qa(
+            answer_type=answer_type,
+            gold=gold,
+            prediction=prediction,
+            task_type=task_type,
+        )
+        return Score(
+            correct=plotqa_score.correct,
+            expected=plotqa_score.expected,
+            actual=plotqa_score.actual,
+            score=plotqa_score.score,
+            metadata=dict(plotqa_score.metadata),
         )
 
     expected = _normalize_by_type(answer_type, gold)

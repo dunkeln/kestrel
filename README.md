@@ -6,7 +6,8 @@ Judge-VLM capable of judging other VLMs' outputs on chart reasoning.
 ## Benchmarks & Datasets
 
 + ChartQA — 20K+ charts, question-answer pairs, strong ground truth
-+ PlotQA — synthetic plot charts used here as structure extraction supervision
++ PlotQA QA — chart VQA with fixed-vocabulary, extractive, and computed/OOV answers
++ PlotQA Structure — `achang/plot_qa` serialized chart-structure artifact, distinct from PlotQA QA
 + FigureQA — yes/no questions on scientific figures
 + ChartBench — specifically for chart understanding evaluation
 + MMC-Benchmark — multi-task chart comprehension
@@ -17,11 +18,11 @@ Current typed exact-match accuracy across 256 normalized test samples per benchm
 
 ![Qwen-VL base model size wide bench accuracy](assets/runpod_base_model_size_wide_bench_accuracy.png)
 
-PlotQA is different from the other QA-style benchmarks in this repo. The bench asks the model to serialize the chart into a structure of series names, x/category labels, and numeric point values. The headline score is a model-quality composite over fact coverage and component-level matching for values, series, and x-labels. A model can receive partial credit for getting one component right without requiring an exact canonical table-cell match.
+PlotQA Structure is different from the QA-style benchmarks in this repo. The bench asks the model to serialize the chart into a structure of series names, x/category labels, and numeric point values. The headline score is a model-quality composite over fact coverage and component-level matching for values, series, and x-labels. A model can receive partial credit for getting one component right without requiring an exact canonical table-cell match.
 
 ![PlotQA structured extraction breakdown by model size](assets/runpod_base_model_size_plotqa_breakdown.png)
 
-The current pretrained Qwen-VL base result shows a structured-output failure mode: larger models parse the requested schema more often and recover more series/value signal, while strict canonical point F1 remains near zero. Treat PlotQA as an alignment/SFT target rather than a normal exact-match QA benchmark.
+The current pretrained Qwen-VL base result shows a structured-output failure mode: larger models parse the requested schema more often and recover more series/value signal, while strict canonical point F1 remains near zero. Treat PlotQA Structure as an alignment/SFT target rather than a normal exact-match QA benchmark.
 
 ### Dataset Contract
 
@@ -113,7 +114,7 @@ MMC-Benchmark uses instruction/label rows:
 }
 ```
 
-PlotQA is structure supervision, not normal QA:
+PlotQA Structure is structure supervision, not normal QA:
 
 ```python
 {
@@ -125,6 +126,21 @@ PlotQA is structure supervision, not normal QA:
 }
 ```
 
+PlotQA QA is normal benchmark QA. The current HF SDK-backed artifact exposes a single `train` split, so the loader aliases `train`, `validation`, and `test` to that split for reproducible sampling.
+
+```python
+{
+    "question": "What is the difference between USA and China emissions in 2005?",
+    "answer": "7.3",
+    "answer_type": "numeric",
+    "supervision": "benchmark",
+    "task_type": "arithmetic",
+    "metadata": {
+        "plotqa_answer_mode": "computed_oov",
+    },
+}
+```
+
 Use the loader API for batched, no-store reads:
 
 ```python
@@ -133,6 +149,22 @@ from training.datasets.loaders import DatasetLoader
 loader = DatasetLoader("chartqa", streaming=True)
 batch = list(loader.batch(offset=0, limit=32))
 ```
+
+### SFT Data Generation
+
+Generate deterministic per-benchmark JSONL training artifacts under `artifacts/train_data/`:
+
+```bash
+uv run python -m training.sft.generate --dataset chartqa --split train --samples 1000
+```
+
+Use provider-native batch mode for cheaper offline teacher and synthesis calls:
+
+```bash
+uv run python -m training.sft.generate --dataset chartqa --split train --samples 1000 --batch-size 32 --provider-mode batch
+```
+
+`--provider-mode batch` submits one Anthropic teacher batch, one OpenAI teacher batch, and one Anthropic synthesis batch per local stream batch. Keep `sync` mode for smoke tests and short interactive runs.
 
 ## Model
 

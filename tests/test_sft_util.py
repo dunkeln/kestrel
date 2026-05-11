@@ -7,14 +7,18 @@ from training.datasets.contracts import EvalSample
 from training.sft.reasoning_pipeline import PipelineConfig
 from training.sft.reasoning_synthesis import build_synthesis_prompt, lint_synthesis
 from training.sft.teacher_ensemble import (
+    CLAUDE_ADJUDICATION_MODEL,
+    CLAUDE_SYNTHESIS_MODEL,
+    CLAUDE_TEACHER_MODEL,
     CONSTITUTIONAL_CONSTRAINT,
-    GROK_MODEL,
     OPENAI_MODEL,
+    STAGE1_COMPUTE_REASONING_PROMPT,
     STAGE1_REASONING_PROMPT,
     build_stage_prompt,
     contest,
     dissenting_providers,
     retry_prompt,
+    stage1_requires_compute,
     validate_reasoning,
     validation_error,
 )
@@ -35,8 +39,10 @@ def test_stage1_teacher_prompt_uses_constitutional_template():
 
 
 def test_teacher_models_use_current_lightweight_vlm_choices():
+    assert CLAUDE_TEACHER_MODEL == "claude-haiku-4-5"
+    assert CLAUDE_SYNTHESIS_MODEL == "claude-sonnet-4-5"
+    assert CLAUDE_ADJUDICATION_MODEL == CLAUDE_TEACHER_MODEL
     assert OPENAI_MODEL == "gpt-4o-mini"
-    assert GROK_MODEL == "grok-4.3"
 
 
 def test_eval_sample_prompt_reuses_dataset_task_guidance_without_replacing_schema():
@@ -61,6 +67,35 @@ def test_eval_sample_prompt_reuses_dataset_task_guidance_without_replacing_schem
     assert "the XML structure above is still required" in prompt
 
 
+def test_arithmetic_stage1_prompt_requires_compute_tag():
+    sample = {
+        "imgname": "chart.png",
+        "question": "What is the difference between A and B?",
+        "answer": "7.3",
+        "answer_type": "numeric",
+        "task_type": "arithmetic",
+    }
+
+    prompt = build_stage_prompt(sample, stage=1)
+
+    assert stage1_requires_compute(sample)
+    assert prompt == STAGE1_COMPUTE_REASONING_PROMPT.format(
+        constitutional_constraint=CONSTITUTIONAL_CONSTRAINT,
+        question="What is the difference between A and B?",
+        answer="7.3",
+    )
+    assert not validate_reasoning(
+        "<perceive>a</perceive><extract>b</extract><answer>7.3</answer>",
+        stage=1,
+        requires_compute=True,
+    )
+    assert validate_reasoning(
+        "<perceive>a</perceive><extract>b</extract><compute>1 + 6.3 = 7.3</compute><answer>7.3</answer>",
+        stage=1,
+        requires_compute=True,
+    )
+
+
 def test_validation_and_contest_use_required_stage1_tags():
     yes_a = "<perceive>a</perceive><extract>b</extract><answer>yes</answer>"
     yes_b = "<perceive>a</perceive><extract>b</extract><answer> yes </answer>"
@@ -70,12 +105,8 @@ def test_validation_and_contest_use_required_stage1_tags():
     assert validation_error("<perceive>a</perceive>", stage=1) == (
         "missing or empty XML tags: extract, answer"
     )
-    assert contest({"claude": yes_a, "openai": yes_b, "grok": no}, stage=1) == "yes"
-    assert dissenting_providers(
-        {"claude": yes_a, "openai": yes_b, "grok": no},
-        agreed_output="yes",
-        stage=1,
-    ) == ["grok"]
+    assert contest({"claude": yes_a, "openai": yes_b}, stage=1) == "yes"
+    assert contest({"claude": yes_a, "openai": no}, stage=1) is None
 
 
 def test_retry_prompt_carries_error_and_previous_response():
@@ -96,15 +127,28 @@ def test_synthesis_prompt_uses_agreed_answer_and_colleagues():
     prompt = build_synthesis_prompt(
         claude_reasoning="claude trace",
         gpt_reasoning="gpt trace",
-        grok_reasoning="grok trace",
         agreed_output="42",
         stage=1,
     )
 
+    assert "Colleague Claude Haiku" in prompt
+    assert "claude trace" in prompt
     assert "Colleague GPT" in prompt
     assert "gpt trace" in prompt
-    assert "grok trace" in prompt
     assert "<answer>42</answer>" in prompt
+
+
+def test_compute_synthesis_prompt_uses_compute_schema():
+    prompt = build_synthesis_prompt(
+        claude_reasoning="claude trace",
+        gpt_reasoning="gpt trace",
+        agreed_output="7.3",
+        stage=1,
+        requires_compute=True,
+    )
+
+    assert "<compute>" in prompt
+    assert "<answer>7.3</answer>" in prompt
 
 
 def test_synthesis_lint_flags_unnecessary_extra_facts():

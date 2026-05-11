@@ -9,8 +9,13 @@ from typing import Any
 
 import aiofiles
 
-from training.sft.reasoning_synthesis import synthesize_with_retries
+from training.sft.reasoning_synthesis import (
+    SynthesisResult,
+    adjudicate_plotqa_numeric,
+    synthesize_with_retries,
+)
 from training.sft.teacher_ensemble import (
+    CLAUDE_ADJUDICATION_MODEL,
     TeacherCallResult,
     TeacherName,
     build_stage_prompt,
@@ -20,6 +25,7 @@ from training.sft.teacher_ensemble import (
     dissenting_providers,
     encode_image,
     retry_prompt,
+    stage1_requires_compute,
     validate_reasoning,
     validation_error,
     vote_map,
@@ -122,16 +128,32 @@ async def process_sample(
     try:
         image_b64 = await encode_image(sample["imgname"])
         prompt = build_stage_prompt(sample, stage=cfg.stage)
+        requires_compute = cfg.stage == 1 and stage1_requires_compute(sample)
         teacher_results = await _teacher_round(
             image_b64=image_b64,
             prompt=prompt,
             stage=cfg.stage,
+            requires_compute=requires_compute,
             config=cfg,
         )
         reasonings = _teacher_texts(teacher_results)
-        agreed_output = contest(reasonings, stage=cfg.stage)
+        agreed_output = contest(
+            reasonings,
+            stage=cfg.stage,
+            requires_compute=requires_compute,
+        )
         if agreed_output is None:
-            return _skipped(sample, teacher_results, "no_teacher_majority")
+            adjudication = await _plotqa_numeric_adjudication(
+                image_b64=image_b64,
+                sample=sample,
+                reasonings=reasonings,
+                teacher_results=teacher_results,
+                requires_compute=requires_compute,
+                config=cfg,
+            )
+            if adjudication is None:
+                return _skipped(sample, teacher_results, "no_teacher_majority")
+            return adjudication
 
         repaired = await _repair_single_dissenter(
             image_b64=image_b64,
@@ -139,28 +161,34 @@ async def process_sample(
             teacher_results=teacher_results,
             agreed_output=agreed_output,
             stage=cfg.stage,
+            requires_compute=requires_compute,
             config=cfg,
         )
         teacher_results.update(repaired)
         reasonings = _teacher_texts(teacher_results)
-        agreed_output = contest(reasonings, stage=cfg.stage)
+        agreed_output = contest(
+            reasonings,
+            stage=cfg.stage,
+            requires_compute=requires_compute,
+        )
         if agreed_output is None:
             return _skipped(sample, teacher_results, "no_teacher_majority_after_repair")
 
-        if not validate_reasoning(reasonings.get("openai"), stage=cfg.stage):
+        if not validate_reasoning(
+            reasonings.get("openai"),
+            stage=cfg.stage,
+            requires_compute=requires_compute,
+        ):
             return _skipped(sample, teacher_results, "missing_openai_trace")
-        if not validate_reasoning(reasonings.get("grok"), stage=cfg.stage):
-            return _skipped(sample, teacher_results, "missing_grok_trace")
-
         synthesis = await synthesize_with_retries(
             image_b64=image_b64,
             claude_reasoning=reasonings.get("claude") or "",
             gpt_reasoning=reasonings.get("openai") or "",
-            grok_reasoning=reasonings.get("grok") or "",
             agreed_output=agreed_output,
             stage=cfg.stage,
             max_validation_attempts=cfg.max_synthesis_validation_attempts,
             sample=sample,
+            requires_compute=requires_compute,
         )
         if synthesis.text is None:
             return _skipped(
@@ -171,30 +199,14 @@ async def process_sample(
                 synthesis_error=synthesis.error,
             )
 
-        return SampleResult(
+        return _successful_result(
             sample=sample,
-            sft_record=_sft_record(
-                sample,
-                synthesis.text,
-                stage=cfg.stage,
-                metadata=_trace_metadata(
-                    teacher_results=teacher_results,
-                    agreed_output=agreed_output,
-                    stage=cfg.stage,
-                    synthesis_attempts=synthesis.attempts,
-                    synthesis_lint_errors=synthesis.lint_errors,
-                ),
-            ),
+            synthesized=synthesis.text,
+            teacher_results=teacher_results,
             agreed_output=agreed_output,
-            teacher_outputs=reasonings,
-            teacher_errors=_teacher_errors(teacher_results),
-            metadata=_trace_metadata(
-                teacher_results=teacher_results,
-                agreed_output=agreed_output,
-                stage=cfg.stage,
-                synthesis_attempts=synthesis.attempts,
-                synthesis_lint_errors=synthesis.lint_errors,
-            ),
+            stage=cfg.stage,
+            requires_compute=requires_compute,
+            synthesis=synthesis,
         )
     except Exception as exc:
         logger.exception("sample failed before completion")
@@ -214,6 +226,7 @@ async def _teacher_round(
     image_b64: str,
     prompt: str,
     stage: int,
+    requires_compute: bool,
     config: PipelineConfig,
 ) -> dict[TeacherName, TeacherCallResult]:
     results = await call_all_teachers(
@@ -225,7 +238,11 @@ async def _teacher_round(
         invalid = {
             provider: result
             for provider, result in results.items()
-            if not validate_reasoning(result.text, stage=stage)
+            if not validate_reasoning(
+                result.text,
+                stage=stage,
+                requires_compute=requires_compute,
+            )
         }
         if not invalid:
             break
@@ -236,8 +253,15 @@ async def _teacher_round(
                     image_b64=image_b64,
                     base_prompt=prompt,
                     previous=result,
-                    error=result.error or validation_error(result.text, stage=stage) or "invalid trace",
+                    error=result.error
+                    or validation_error(
+                        result.text,
+                        stage=stage,
+                        requires_compute=requires_compute,
+                    )
+                    or "invalid trace",
                     stage=stage,
+                    requires_compute=requires_compute,
                     config=config,
                 )
                 for provider, result in invalid.items()
@@ -254,21 +278,21 @@ async def _repair_single_dissenter(
     teacher_results: dict[TeacherName, TeacherCallResult],
     agreed_output: str,
     stage: int,
+    requires_compute: bool,
     config: PipelineConfig,
 ) -> dict[TeacherName, TeacherCallResult]:
     dissenters = dissenting_providers(
         _teacher_texts(teacher_results),
         agreed_output=agreed_output,
         stage=stage,
+        requires_compute=requires_compute,
     )
     if len(dissenters) != 1:
         return {}
 
     provider = dissenters[0]
     previous = teacher_results[provider]
-    value_error = (
-        f"{provider} output did not match the 2-of-3 agreed value `{agreed_output}`"
-    )
+    value_error = f"{provider} output did not match agreed value `{agreed_output}`"
     result = await _repair_teacher(
         provider=provider,
         image_b64=image_b64,
@@ -276,6 +300,7 @@ async def _repair_single_dissenter(
         previous=previous,
         error=value_error,
         stage=stage,
+        requires_compute=requires_compute,
         config=config,
         agreed_output=agreed_output,
     )
@@ -290,6 +315,7 @@ async def _repair_teacher(
     previous: TeacherCallResult,
     error: str,
     stage: int,
+    requires_compute: bool,
     config: PipelineConfig,
     agreed_output: str | None = None,
 ) -> TeacherCallResult:
@@ -305,13 +331,112 @@ async def _repair_teacher(
         prompt,
         max_api_attempts=config.max_api_attempts,
     )
-    if not validate_reasoning(result.text, stage=stage):
+    if not validate_reasoning(
+        result.text,
+        stage=stage,
+        requires_compute=requires_compute,
+    ):
         logger.info(
             "%s repair failed validation: %s",
             provider,
-            validation_error(result.text, stage=stage) or result.error,
+            validation_error(
+                result.text,
+                stage=stage,
+                requires_compute=requires_compute,
+            )
+            or result.error,
         )
     return result
+
+
+async def _plotqa_numeric_adjudication(
+    *,
+    image_b64: str,
+    sample: dict,
+    reasonings: dict[str, str | None],
+    teacher_results: dict[TeacherName, TeacherCallResult],
+    requires_compute: bool,
+    config: PipelineConfig,
+) -> SampleResult | None:
+    if not _is_plotqa_numeric_stage1(sample, config):
+        return None
+    if not all(
+        validate_reasoning(
+            reasonings.get(provider),
+            stage=1,
+            requires_compute=requires_compute,
+        )
+        for provider in ("claude", "openai")
+    ):
+        return None
+
+    synthesis = await adjudicate_plotqa_numeric(
+        image_b64=image_b64,
+        claude_reasoning=reasonings.get("claude") or "",
+        gpt_reasoning=reasonings.get("openai") or "",
+        sample=sample,
+        max_validation_attempts=config.max_synthesis_validation_attempts,
+    )
+    if synthesis.text is None:
+        return _skipped(
+            sample,
+            teacher_results,
+            "plotqa_numeric_adjudication_failed",
+            agreed_output=str(sample.get("answer") or ""),
+            synthesis_error=synthesis.error,
+        )
+    return _successful_result(
+        sample=sample,
+        synthesized=synthesis.text,
+        teacher_results=teacher_results,
+        agreed_output=str(sample.get("answer") or ""),
+        stage=1,
+        requires_compute=True,
+        synthesis=synthesis,
+        extra_metadata={
+            "plotqa_numeric_adjudicated": True,
+            "adjudicator_model": CLAUDE_ADJUDICATION_MODEL,
+        },
+    )
+
+
+def _is_plotqa_numeric_stage1(sample: dict, config: PipelineConfig) -> bool:
+    return (
+        config.stage == 1
+        and sample.get("dataset") == "plotqa_qa"
+        and sample.get("answer_type") == "numeric"
+    )
+
+
+def _successful_result(
+    *,
+    sample: dict,
+    synthesized: str,
+    teacher_results: dict[TeacherName, TeacherCallResult],
+    agreed_output: str,
+    stage: int,
+    requires_compute: bool,
+    synthesis: SynthesisResult,
+    extra_metadata: dict[str, Any] | None = None,
+) -> SampleResult:
+    metadata = _trace_metadata(
+        teacher_results=teacher_results,
+        agreed_output=agreed_output,
+        stage=stage,
+        requires_compute=requires_compute,
+        synthesis_attempts=synthesis.attempts,
+        synthesis_lint_errors=synthesis.lint_errors,
+    )
+    if extra_metadata:
+        metadata.update(extra_metadata)
+    return SampleResult(
+        sample=sample,
+        sft_record=_sft_record(sample, synthesized, stage=stage, metadata=metadata),
+        agreed_output=agreed_output,
+        teacher_outputs=_teacher_texts(teacher_results),
+        teacher_errors=_teacher_errors(teacher_results),
+        metadata=metadata,
+    )
 
 
 def _sft_record(
@@ -372,17 +497,27 @@ def _trace_metadata(
     teacher_results: dict[TeacherName, TeacherCallResult],
     agreed_output: str,
     stage: int,
+    requires_compute: bool,
     synthesis_attempts: int,
     synthesis_lint_errors: tuple[str, ...],
 ) -> dict[str, Any]:
     reasonings = _teacher_texts(teacher_results)
     return {
         "agreed_output": agreed_output,
-        "teacher_votes": vote_map(reasonings, stage=stage),
+        "teacher_votes": vote_map(
+            reasonings,
+            stage=stage,
+            requires_compute=requires_compute,
+        ),
         "teacher_valid": {
-            provider: validate_reasoning(result.text, stage=stage)
+            provider: validate_reasoning(
+                result.text,
+                stage=stage,
+                requires_compute=requires_compute,
+            )
             for provider, result in teacher_results.items()
         },
+        "reasoning_schema": "stage1_compute" if requires_compute else f"stage{stage}",
         "teacher_errors": _teacher_errors(teacher_results),
         "teacher_attempts": {
             provider: result.attempts for provider, result in teacher_results.items()

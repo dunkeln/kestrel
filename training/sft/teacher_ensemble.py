@@ -14,24 +14,21 @@ from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 from training.datasets.contracts import EvalSample
 from training.datasets.loaders import system_prompt
-from xai_sdk import Client as XAIClient
-from xai_sdk.chat import image as xai_image
-from xai_sdk.chat import text as xai_text
-from xai_sdk.chat import user as xai_user
 
 
 logger = logging.getLogger(__name__)
 
-TeacherName = Literal["claude", "openai", "grok"]
+TeacherName = Literal["claude", "openai"]
 
-CLAUDE_MODEL = "claude-sonnet-4-5"
+CLAUDE_TEACHER_MODEL = "claude-haiku-4-5"
+CLAUDE_SYNTHESIS_MODEL = "claude-sonnet-4-5"
+CLAUDE_ADJUDICATION_MODEL = CLAUDE_TEACHER_MODEL
+CLAUDE_MODEL = CLAUDE_TEACHER_MODEL
 OPENAI_MODEL = "gpt-4o-mini"
-GROK_MODEL = "grok-4.3"
 
 ROLE_ASSIGNMENTS = {
-    "claude": "constitutional synthesizer — structure, consistency, conservatism",
+    "claude": "constitutional teacher — structure, consistency, conservatism",
     "openai": "numerical analyst — precise value extraction, axis reading",
-    "grok": "trend analyst — directional reasoning, comparative claims",
 }
 
 CONSTITUTIONAL_CONSTRAINT = """
@@ -53,10 +50,26 @@ Known correct answer: {answer}
 Generate grounded reasoning following this exact structure:
 
 <perceive>Chart type, axis labels, units, legend items visible in the image</perceive>
-<extract>Specific value(s) read from the chart with explicit axis reference</extract>
+<extract>Task-relevant chart structure: only the visible labels, series, x/category values, y/numeric values, or visual relation needed to answer</extract>
 <answer>{answer}</answer>
 
-Complete all tags. Be concise but specific."""
+Complete all tags. Be concise but specific. Do not serialize the full chart unless the question explicitly asks for structure."""
+
+STAGE1_COMPUTE_REASONING_PROMPT = """You are analyzing a chart to answer a question.
+
+{constitutional_constraint}
+
+Question: {question}
+Known correct answer: {answer}
+
+Generate grounded reasoning following this exact structure:
+
+<perceive>Chart type, axis labels, units, legend items visible in the image</perceive>
+<extract>Task-relevant chart structure: only the visible labels, series, x/category values, and y/numeric values needed for the calculation</extract>
+<compute>Arithmetic or comparison performed only from the extracted chart values</compute>
+<answer>{answer}</answer>
+
+Complete all tags. Be concise but specific. Do not serialize the full chart unless the question explicitly asks for structure."""
 
 STAGE2_REASONING_PROMPT = """You are a chart faithfulness judge.
 
@@ -68,7 +81,7 @@ Known correct verdict: {verdict}
 Evaluate the claim using this exact structure:
 
 <perceive>Chart type, axis labels, units, legend items visible in the image</perceive>
-<extract>Specific values relevant to the claim with axis reference</extract>
+<extract>Task-relevant chart structure for the claim: only visible values, labels, trends, or visual relations needed to judge it</extract>
 <compare>How extracted values support or contradict each component of the claim</compare>
 <verdict>{verdict}</verdict>
 <confidence>0.0-1.0</confidence>
@@ -103,7 +116,12 @@ async def encode_image(image_path: str) -> str:
 def build_stage_prompt(sample: dict | EvalSample, *, stage: int) -> str:
     task_prompt = _task_prompt(sample)
     if stage == 1:
-        prompt = STAGE1_REASONING_PROMPT.format(
+        template = (
+            STAGE1_COMPUTE_REASONING_PROMPT
+            if stage1_requires_compute(sample)
+            else STAGE1_REASONING_PROMPT
+        )
+        prompt = template.format(
             constitutional_constraint=CONSTITUTIONAL_CONSTRAINT,
             question=_sample_value(sample, "question"),
             answer=_sample_value(sample, "answer"),
@@ -123,19 +141,62 @@ async def get_claude_reasoning(image_b64: str, prompt: str) -> str | None:
     return (await call_teacher("claude", image_b64, prompt)).text
 
 
+async def get_claude_synthesis(
+    image_b64: str,
+    prompt: str,
+    *,
+    max_api_attempts: int = 3,
+) -> str | None:
+    """Call Claude Sonnet for privileged synthesis."""
+    async def call() -> str:
+        return await _call_claude(
+            image_b64,
+            prompt,
+            model=CLAUDE_SYNTHESIS_MODEL,
+        )
+
+    text, error, _attempts = await _with_backoff(
+        label="claude_synthesis",
+        call=call,
+        max_attempts=max_api_attempts,
+    )
+    if error:
+        logger.warning("claude synthesis failed: %s", error)
+    return text
+
+
+async def get_claude_adjudication(
+    image_b64: str,
+    prompt: str,
+    *,
+    max_api_attempts: int = 3,
+) -> str | None:
+    """Call Claude Haiku for narrow adjudication tasks."""
+    async def call() -> str:
+        return await _call_claude(
+            image_b64,
+            prompt,
+            model=CLAUDE_ADJUDICATION_MODEL,
+        )
+
+    text, error, _attempts = await _with_backoff(
+        label="claude_adjudication",
+        call=call,
+        max_attempts=max_api_attempts,
+    )
+    if error:
+        logger.warning("claude adjudication failed: %s", error)
+    return text
+
+
 async def get_openai_reasoning(image_b64: str, prompt: str) -> str | None:
     """Call GPT with image and prompt. Return text response."""
     return (await call_teacher("openai", image_b64, prompt)).text
 
 
-async def get_grok_reasoning(image_b64: str, prompt: str) -> str | None:
-    """Call Grok with image and prompt via xai_sdk. Return text response."""
-    return (await call_teacher("grok", image_b64, prompt)).text
-
-
 async def get_all_reasonings(image_b64: str, prompt: str) -> dict[str, str | None]:
-    """Call all three models in parallel via asyncio.gather.
-    Return {"claude": str, "openai": str, "grok": str}"""
+    """Call both teacher models in parallel via asyncio.gather.
+    Return {"claude": str, "openai": str}"""
     results = await call_all_teachers(image_b64, prompt)
     return {provider: result.text for provider, result in results.items()}
 
@@ -149,7 +210,6 @@ async def call_all_teachers(
     results = await asyncio.gather(
         call_teacher("claude", image_b64, prompt, max_api_attempts=max_api_attempts),
         call_teacher("openai", image_b64, prompt, max_api_attempts=max_api_attempts),
-        call_teacher("grok", image_b64, prompt, max_api_attempts=max_api_attempts),
     )
     return {result.provider: result for result in results}
 
@@ -164,11 +224,13 @@ async def call_teacher(
     async def call() -> str:
         match provider:
             case "claude":
-                return await _call_claude(image_b64, prompt)
+                return await _call_claude(
+                    image_b64,
+                    prompt,
+                    model=CLAUDE_TEACHER_MODEL,
+                )
             case "openai":
                 return await _call_openai(image_b64, prompt)
-            case "grok":
-                return await asyncio.to_thread(_call_grok, image_b64, prompt)
 
     text, error, attempts = await _with_backoff(
         label=provider,
@@ -184,27 +246,46 @@ async def call_teacher(
     )
 
 
-def validate_reasoning(reasoning: str | None, stage: int = 1) -> bool:
+def validate_reasoning(
+    reasoning: str | None,
+    stage: int = 1,
+    *,
+    requires_compute: bool = False,
+) -> bool:
     """Check all required XML tags are present.
     Stage 1 requires: perceive, extract, answer
+    Stage 1 compute samples require: perceive, extract, compute, answer
     Stage 2 requires: perceive, extract, compare, verdict, confidence, rubric"""
-    return validation_error(reasoning, stage=stage) is None
+    return validation_error(
+        reasoning,
+        stage=stage,
+        requires_compute=requires_compute,
+    ) is None
 
 
-def validation_error(reasoning: str | None, stage: int = 1) -> str | None:
+def validation_error(
+    reasoning: str | None,
+    stage: int = 1,
+    *,
+    requires_compute: bool = False,
+) -> str | None:
     if not reasoning:
         return "empty response"
 
     missing = [
-        tag for tag in required_tags(stage) if _tag_value(reasoning, tag) is None
+        tag
+        for tag in required_tags(stage, requires_compute=requires_compute)
+        if _tag_value(reasoning, tag) is None
     ]
     if missing:
         return f"missing or empty XML tags: {', '.join(missing)}"
     return None
 
 
-def required_tags(stage: int) -> tuple[str, ...]:
+def required_tags(stage: int, *, requires_compute: bool = False) -> tuple[str, ...]:
     if stage == 1:
+        if requires_compute:
+            return ("perceive", "extract", "compute", "answer")
         return ("perceive", "extract", "answer")
     return ("perceive", "extract", "compare", "verdict", "confidence", "rubric")
 
@@ -229,11 +310,20 @@ def extract_vote(reasoning: str, *, stage: int) -> str | None:
     return extract_answer(reasoning) if stage == 1 else extract_verdict(reasoning)
 
 
-def contest(reasonings: dict, stage: int = 1) -> str | None:
+def contest(
+    reasonings: dict,
+    stage: int = 1,
+    *,
+    requires_compute: bool = False,
+) -> str | None:
     """Majority vote on verdict (stage 2) or answer (stage 1).
     Validate each reasoning before including in vote.
-    Return agreed value if >= 2/3 agreement, else None."""
-    votes = vote_map(reasonings, stage=stage)
+    Return agreed value when at least two valid teachers agree, else None."""
+    votes = vote_map(
+        reasonings,
+        stage=stage,
+        requires_compute=requires_compute,
+    )
     if len(votes) < 2:
         return None
 
@@ -244,10 +334,19 @@ def contest(reasonings: dict, stage: int = 1) -> str | None:
     return next(value for value in votes.values() if _normalize_vote(value) == agreed)
 
 
-def vote_map(reasonings: dict, *, stage: int) -> dict[str, str]:
+def vote_map(
+    reasonings: dict,
+    *,
+    stage: int,
+    requires_compute: bool = False,
+) -> dict[str, str]:
     votes = {}
     for provider, reasoning in reasonings.items():
-        if not validate_reasoning(reasoning, stage=stage):
+        if not validate_reasoning(
+            reasoning,
+            stage=stage,
+            requires_compute=requires_compute,
+        ):
             continue
         value = extract_vote(reasoning, stage=stage)
         if value is not None:
@@ -260,11 +359,16 @@ def dissenting_providers(
     *,
     agreed_output: str,
     stage: int,
+    requires_compute: bool = False,
 ) -> list[str]:
     agreed = _normalize_vote(agreed_output)
     dissenters = []
     for provider, reasoning in reasonings.items():
-        if not validate_reasoning(reasoning, stage=stage):
+        if not validate_reasoning(
+            reasoning,
+            stage=stage,
+            requires_compute=requires_compute,
+        ):
             dissenters.append(str(provider))
             continue
         value = extract_vote(reasoning, stage=stage)
@@ -294,10 +398,10 @@ def retry_prompt(
     return "\n".join(parts)
 
 
-async def _call_claude(image_b64: str, prompt: str) -> str:
+async def _call_claude(image_b64: str, prompt: str, *, model: str) -> str:
     client = AsyncAnthropic()
     response = await client.messages.create(
-        model=CLAUDE_MODEL,
+        model=model,
         max_tokens=1024,
         temperature=0,
         messages=[
@@ -339,23 +443,6 @@ async def _call_openai(image_b64: str, prompt: str) -> str:
         ],
     )
     return response.choices[0].message.content or ""
-
-
-def _call_grok(image_b64: str, prompt: str) -> str:
-    client = XAIClient()
-    chat = client.chat.create(
-        model=GROK_MODEL,
-        max_tokens=1024,
-        temperature=0,
-        messages=[
-            xai_user(
-                xai_text(prompt),
-                xai_image(_data_url(image_b64)),
-            )
-        ],
-    )
-    response = chat.sample()
-    return response.content or ""
 
 
 async def _with_backoff(
@@ -412,6 +499,63 @@ def _sample_value(sample: dict | EvalSample, key: str) -> str:
     return str(sample[key])
 
 
+def stage1_requires_compute(sample: dict | EvalSample) -> bool:
+    answer_type = _sample_optional_value(sample, "answer_type")
+    answer = _sample_optional_value(sample, "answer")
+    if answer_type in {"yes_no", "text", "multiple_choice", "structure"}:
+        return False
+    if answer_type is None and answer is not None and not _looks_numeric(answer):
+        return False
+
+    metadata = _sample_metadata(sample)
+    if metadata.get("plotqa_answer_mode") == "computed_oov":
+        return True
+
+    task_type = _sample_optional_value(sample, "task_type")
+    if task_type == "arithmetic":
+        return True
+
+    question = str(_sample_optional_value(sample, "question") or "").lower()
+    arithmetic_terms = (
+        "difference",
+        "ratio",
+        "average",
+        "total",
+        "sum",
+        "combined",
+        "how much more",
+        "how much less",
+    )
+    return bool(_looks_numeric(answer) and any(term in question for term in arithmetic_terms))
+
+
+def _sample_optional_value(sample: dict | EvalSample, key: str) -> str | None:
+    if isinstance(sample, EvalSample):
+        value = getattr(sample, key, None)
+    else:
+        value = sample.get(key)
+    if value is None:
+        return None
+    return str(value)
+
+
+def _sample_metadata(sample: dict | EvalSample) -> dict:
+    if isinstance(sample, EvalSample):
+        return sample.metadata
+    metadata = sample.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _looks_numeric(value: str | None) -> bool:
+    if value is None:
+        return False
+    try:
+        float(str(value).strip().replace(",", "").rstrip("%").rstrip("."))
+    except ValueError:
+        return False
+    return True
+
+
 def _task_prompt(sample: dict | EvalSample) -> str | None:
     if isinstance(sample, EvalSample):
         return system_prompt(sample)
@@ -466,10 +610,13 @@ def _anthropic_text(response) -> str:
 __all__ = [
     "ROLE_ASSIGNMENTS",
     "CLAUDE_MODEL",
+    "CLAUDE_ADJUDICATION_MODEL",
+    "CLAUDE_TEACHER_MODEL",
+    "CLAUDE_SYNTHESIS_MODEL",
     "OPENAI_MODEL",
-    "GROK_MODEL",
     "CONSTITUTIONAL_CONSTRAINT",
     "STAGE1_REASONING_PROMPT",
+    "STAGE1_COMPUTE_REASONING_PROMPT",
     "STAGE2_REASONING_PROMPT",
     "TeacherCallResult",
     "build_stage_prompt",
@@ -481,8 +628,11 @@ __all__ = [
     "extract_answer",
     "extract_verdict",
     "get_all_reasonings",
+    "get_claude_adjudication",
+    "get_claude_synthesis",
     "required_tags",
     "retry_prompt",
+    "stage1_requires_compute",
     "validate_reasoning",
     "validation_error",
     "vote_map",

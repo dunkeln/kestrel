@@ -20,7 +20,7 @@ DATASET_CARDS = {
         },
         "supervision": "benchmark",
     },
-    "plotqa": {
+    "plotqa_structure": {
         "path": "achang/plot_qa",
         "splits": {
             "train": "train",
@@ -28,6 +28,15 @@ DATASET_CARDS = {
             "test": "test",
         },
         "supervision": "structure",
+    },
+    "plotqa_qa": {
+        "path": "AsphyXIA/plotqa",
+        "splits": {
+            "train": "train",
+            "validation": "train",
+            "test": "train",
+        },
+        "supervision": "benchmark",
     },
     "figureqa": {
         "path": "vikhyatk/figureqa",
@@ -173,8 +182,10 @@ def _adapt_row(dataset_name, row, source_index=None):
             return [_adapt_chartqa(row)]
         case "figureqa":
             return list(_adapt_figureqa(row, source_index))
-        case "plotqa":
-            return [_adapt_plotqa(row, source_index)]
+        case "plotqa_structure":
+            return [_adapt_plotqa_structure(row, source_index)]
+        case "plotqa_qa":
+            return [_adapt_plotqa_qa(row, source_index)]
         case "chartbench":
             return list(_adapt_chartbench(row))
         case "mmc_benchmark":
@@ -218,11 +229,11 @@ def _adapt_figureqa(row, source_index):
         )
 
 
-def _adapt_plotqa(row, source_index):
+def _adapt_plotqa_structure(row, source_index):
     source_id = source_index if source_index is not None else _stable_id(row["text"])
     return EvalSample(
-        id=f"plotqa:{source_id}",
-        dataset="plotqa",
+        id=f"plotqa_structure:{source_id}",
+        dataset="plotqa_structure",
         image=row["image"],
         question=PLOTQA_STRUCTURE_PROMPT,
         answer=row["text"],
@@ -231,6 +242,89 @@ def _adapt_plotqa(row, source_index):
         task_type="structure_extraction",
         tag="real",
     )
+
+
+def _adapt_plotqa_qa(row, source_index):
+    question = _first_present(row, "question", "query", "user", "prompt")
+    answer = _first_present(row, "answer", "label", "assistant", "response")
+    if question is None or answer is None:
+        raise KeyError("PlotQA QA rows must provide question/user and answer/assistant fields.")
+
+    question = str(question).strip()
+    answer = str(answer).strip()
+    answer_type = infer_answer_type(answer)
+    question_type = row.get("question_type")
+    task_type = _infer_plotqa_qa_task_type(question, question_type)
+    source_id = row.get("id") if row.get("id") is not None else source_index
+    if source_id is None:
+        source_id = _stable_id([question, answer])
+
+    return EvalSample(
+        id=f"plotqa_qa:{source_id}",
+        dataset="plotqa_qa",
+        image=row.get("image") or row.get("img") or row.get("image_path"),
+        question=question,
+        answer=answer,
+        answer_type=answer_type,
+        supervision="benchmark",
+        chart_type=row.get("chart_type"),
+        task_type=task_type,
+        tag="real",
+        metadata={
+            "question_type": question_type,
+            "constructed_caption": row.get("constructed_caption"),
+            "plotqa_answer_mode": _plotqa_answer_mode(question, answer_type, task_type),
+        },
+    )
+
+
+def _first_present(row, *keys):
+    for key in keys:
+        value = row.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _infer_plotqa_qa_task_type(question, question_type=None):
+    question_text = str(question).lower()
+    question_type_text = str(question_type or "").lower()
+    if question_type_text.startswith("yes_no") or question_text.startswith(
+        ("is ", "are ", "does ", "do ", "was ", "were ")
+    ):
+        return "yes_no"
+    if any(
+        term in question_text
+        for term in (
+            "difference",
+            "ratio",
+            "average",
+            "total",
+            "sum",
+            "combined",
+            "more than",
+            "less than",
+        )
+    ):
+        return "arithmetic"
+    if any(term in question_text for term in ("maximum", "minimum", "highest", "lowest")):
+        return "global_extrema"
+    if any(term in question_text for term in ("label", "title", "represent", "legend")):
+        return "chart_reasoning"
+    if question_text.startswith(("how many", "in how many", "what is the value")):
+        return "value_extraction"
+    return infer_task_type(question)
+
+
+def _plotqa_answer_mode(question, answer_type, task_type):
+    if answer_type in {"yes_no", "text", "multiple_choice"}:
+        return "fixed_vocabulary"
+    if task_type == "arithmetic":
+        return "computed_oov"
+    question_text = str(question).lower()
+    if any(term in question_text for term in ("maximum", "minimum", "highest", "lowest")):
+        return "computed_or_extractive"
+    return "extractive_or_count"
 
 
 def _adapt_chartbench(row):

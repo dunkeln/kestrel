@@ -17,15 +17,20 @@ dependencies = [
     "openai>=2.36.0",
     "peft>=0.19.1",
     "pillow>=12.2.0",
+    "polars>=1.40.1",
     "qwen-vl-utils>=0.0.14",
     "rich>=15.0.0",
     "torch==2.8.0",
     "torchvision>=0.23.0",
     "transformers>=5.8.0",
-    "xai-sdk>=1.12.2",
 ]
 
 [project.optional-dependencies]
 cuda = [
     "flash-attn>=2.8.3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
 ]

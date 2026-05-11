@@ -39,12 +39,12 @@ class PlotQABreakdown:
 )
 @click.option(
     "--title",
-    default="PlotQA Structured Extraction Breakdown",
+    default="PlotQA-Structure Extraction Breakdown",
     show_default=True,
 )
 @click.option(
     "--subtitle",
-    default="Grouped diagnostics from canonical PlotQA fact scoring",
+    default="Grouped diagnostics from canonical PlotQA-structure fact scoring",
     show_default=True,
 )
 @click.option(
@@ -55,7 +55,7 @@ class PlotQABreakdown:
 )
 @click.option(
     "--output-name",
-    default="plotqa_breakdown",
+    default="plotqa_structure_breakdown",
     show_default=True,
 )
 def main(
@@ -66,7 +66,7 @@ def main(
     output_dir: Path,
     output_name: str,
 ) -> None:
-    """Plot PlotQA structured component averages from bench JSONL outputs."""
+    """Plot PlotQA-structure component averages from bench JSONL outputs."""
     if labels and len(labels) != len(jsonl_paths):
         raise click.ClickException("--label must be passed once per JSONL path.")
 
@@ -91,8 +91,10 @@ def _read_breakdown(path: Path, *, label: str) -> PlotQABreakdown:
         raise click.ClickException(f"No bench records found in {path}.")
 
     datasets = {record["dataset"] for record in records}
-    if datasets != {"plotqa"}:
-        raise click.ClickException(f"Expected only PlotQA records in {path}; found {sorted(datasets)}.")
+    if datasets != {"plotqa_structure"}:
+        raise click.ClickException(
+            f"Expected only PlotQA-structure records in {path}; found {sorted(datasets)}."
+        )
 
     total = len(records)
     score_metadata = [_score_metadata(record) for record in records]
@@ -114,6 +116,8 @@ def _score_metadata(record: dict[str, Any]) -> dict[str, Any]:
         answer_type="structure",
         gold=record["gold"],
         prediction=record["prediction"],
+        dataset="plotqa_structure",
+        task_type="structure_extraction",
     ).metadata
 
 

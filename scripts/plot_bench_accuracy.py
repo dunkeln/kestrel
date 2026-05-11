@@ -158,7 +158,8 @@ def _display_dataset(dataset: str) -> str:
         "figureqa": "FigureQA",
         "chartbench": "ChartBench",
         "mmc_benchmark": "MMC-Benchmark",
-        "plotqa": "PlotQA",
+        "plotqa_qa": "PlotQA QA",
+        "plotqa_structure": "PlotQA Structure",
     }
     return names.get(dataset, dataset)
 
