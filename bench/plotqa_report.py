@@ -85,9 +85,10 @@ def render_plotqa_classification_report(
             [
                 ("semantic match", _percent(sum(record.score == 1.0 for record in records) / total)),
                 ("semantic mean", f"{_mean_score(records):.4f}"),
-                ("point precision", _percent(_mean_metadata(records, "plotqa_point_precision"))),
-                ("point recall", _percent(_mean_metadata(records, "plotqa_point_recall"))),
-                ("point f1", _percent(_mean_metadata(records, "plotqa_point_f1"))),
+                ("model quality", _percent(_mean_metadata(records, "plotqa_model_quality_score"))),
+                ("component f1", _percent(_mean_metadata(records, "plotqa_component_f1"))),
+                ("value f1", _percent(_mean_metadata(records, "plotqa_value_f1"))),
+                ("fact coverage", _percent(_mean_metadata(records, "plotqa_fact_coverage"))),
             ],
         ),
         _metric_table(

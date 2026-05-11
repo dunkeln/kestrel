@@ -38,8 +38,9 @@ def score_plotqa_structure(gold: str, prediction: str) -> PlotQAScore:
     raw_exact_match = _normalize_text(gold) == _normalize_text(prediction)
 
     if not gold_facts or not predicted_facts:
+        quality_score = 1.0 if raw_exact_match else 0.0
         return PlotQAScore(
-            score=1.0 if raw_exact_match else 0.0,
+            score=quality_score,
             metadata={
                 "plotqa_gold_parse_ok": bool(gold_facts),
                 "plotqa_prediction_parse_ok": bool(predicted_facts),
@@ -54,7 +55,14 @@ def score_plotqa_structure(gold: str, prediction: str) -> PlotQAScore:
                 "plotqa_x_label_f1": 0.0,
                 "plotqa_point_precision": 0.0,
                 "plotqa_point_recall": 0.0,
-                "plotqa_point_f1": 1.0 if raw_exact_match else 0.0,
+                "plotqa_point_f1": quality_score,
+                "plotqa_strict_point_f1": quality_score,
+                "plotqa_value_precision": quality_score,
+                "plotqa_value_recall": quality_score,
+                "plotqa_value_f1": quality_score,
+                "plotqa_component_f1": quality_score,
+                "plotqa_fact_coverage": quality_score,
+                "plotqa_model_quality_score": quality_score,
                 "plotqa_count_match": 0.0,
                 "plotqa_gold_series": len(gold_series),
                 "plotqa_predicted_series": len(predicted_series),
@@ -74,9 +82,24 @@ def score_plotqa_structure(gold: str, prediction: str) -> PlotQAScore:
         {_normalize_text(x) for series in predicted_series for x in series.x},
     )
     point_metrics = _fact_prf(gold_facts, predicted_facts)
+    value_metrics = _value_prf(gold_facts, predicted_facts)
+    fact_coverage = min(len(predicted_facts) / len(gold_facts), 1.0)
+    component_f1 = _mean(
+        [
+            series_metrics.f1,
+            x_metrics.f1,
+            value_metrics.f1,
+        ]
+    )
+    quality_score = _mean(
+        [
+            component_f1,
+            fact_coverage,
+        ]
+    )
     count_score = 1.0 if len(gold_facts) == len(predicted_facts) else 0.0
     return PlotQAScore(
-        score=point_metrics.f1,
+        score=quality_score,
         metadata={
             "plotqa_gold_parse_ok": True,
             "plotqa_prediction_parse_ok": True,
@@ -92,6 +115,13 @@ def score_plotqa_structure(gold: str, prediction: str) -> PlotQAScore:
             "plotqa_point_precision": point_metrics.precision,
             "plotqa_point_recall": point_metrics.recall,
             "plotqa_point_f1": point_metrics.f1,
+            "plotqa_strict_point_f1": point_metrics.f1,
+            "plotqa_value_precision": value_metrics.precision,
+            "plotqa_value_recall": value_metrics.recall,
+            "plotqa_value_f1": value_metrics.f1,
+            "plotqa_component_f1": component_f1,
+            "plotqa_fact_coverage": fact_coverage,
+            "plotqa_model_quality_score": quality_score,
             "plotqa_count_match": count_score,
             "plotqa_gold_series": len(gold_series),
             "plotqa_predicted_series": len(predicted_series),
@@ -313,6 +343,45 @@ def _fact_prf(
     )
 
 
+def _value_prf(
+    gold_facts: list[PlotQAFact],
+    predicted_facts: list[PlotQAFact],
+    relative_tolerance: float = 0.05,
+) -> PrecisionRecallF1:
+    if not gold_facts and not predicted_facts:
+        return PrecisionRecallF1(precision=1.0, recall=1.0, f1=1.0)
+    if not gold_facts or not predicted_facts:
+        return PrecisionRecallF1(precision=0.0, recall=0.0, f1=0.0)
+
+    unmatched = [fact.y for fact in predicted_facts]
+    matches = 0
+    for gold in gold_facts:
+        match_index = next(
+            (
+                index
+                for index, predicted_y in enumerate(unmatched)
+                if _numbers_match(gold.y, predicted_y, relative_tolerance)
+            ),
+            None,
+        )
+        if match_index is not None:
+            matches += 1
+            unmatched.pop(match_index)
+
+    precision = matches / len(predicted_facts)
+    recall = matches / len(gold_facts)
+    return PrecisionRecallF1(
+        precision=precision,
+        recall=recall,
+        f1=_harmonic_mean(precision, recall),
+    )
+
+
+def _numbers_match(gold: float, predicted: float, relative_tolerance: float) -> bool:
+    tolerance = max(abs(gold) * relative_tolerance, 1e-3)
+    return abs(gold - predicted) <= tolerance
+
+
 def _facts(series: list[PlotQASeries]) -> list[PlotQAFact]:
     return [
         PlotQAFact(
@@ -356,6 +425,10 @@ def _harmonic_mean(precision: float, recall: float) -> float:
     if precision + recall == 0:
         return 0.0
     return 2 * precision * recall / (precision + recall)
+
+
+def _mean(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
 
 
 def _normalize_text(value: str) -> str:

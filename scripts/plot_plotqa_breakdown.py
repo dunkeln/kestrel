@@ -16,12 +16,12 @@ class PlotQABreakdown:
     label: str
     total: int
     prediction_parse: float
-    point_precision: float
-    point_recall: float
-    point_f1: float
+    model_quality: float
+    component_f1: float
+    fact_coverage: float
+    value_f1: float
     series_f1: float
     x_label_f1: float
-    under_extraction: float
 
 
 @click.command()
@@ -100,12 +100,12 @@ def _read_breakdown(path: Path, *, label: str) -> PlotQABreakdown:
         label=label,
         total=total,
         prediction_parse=_average_bool(score_metadata, "plotqa_prediction_parse_ok"),
-        point_precision=_average_metadata(score_metadata, "plotqa_point_precision"),
-        point_recall=_average_metadata(score_metadata, "plotqa_point_recall"),
-        point_f1=_average_metadata(score_metadata, "plotqa_point_f1"),
+        model_quality=_average_metadata(score_metadata, "plotqa_model_quality_score"),
+        component_f1=_average_metadata(score_metadata, "plotqa_component_f1"),
+        fact_coverage=_average_metadata(score_metadata, "plotqa_fact_coverage"),
+        value_f1=_average_metadata(score_metadata, "plotqa_value_f1"),
         series_f1=_average_metadata(score_metadata, "plotqa_series_f1"),
         x_label_f1=_average_metadata(score_metadata, "plotqa_x_label_f1"),
-        under_extraction=_under_extraction_rate(score_metadata),
     )
 
 
@@ -123,14 +123,6 @@ def _average_bool(rows: list[dict[str, Any]], key: str) -> float:
 
 def _average_metadata(rows: list[dict[str, Any]], key: str) -> float:
     return sum(_numeric(row.get(key, 0.0)) for row in rows) / len(rows)
-
-
-def _under_extraction_rate(rows: list[dict[str, Any]]) -> float:
-    return sum(
-        _numeric(row.get("plotqa_predicted_facts", 0))
-        < _numeric(row.get("plotqa_gold_facts", 0))
-        for row in rows
-    ) / len(rows)
 
 
 def _numeric(value: Any) -> float:
@@ -153,12 +145,12 @@ def _plot_breakdown(
 
     metrics = [
         ("Prediction parse", [row.prediction_parse for row in rows], "#2563EB"),
-        ("Point precision", [row.point_precision for row in rows], "#14B8A6"),
-        ("Point recall", [row.point_recall for row in rows], "#F97316"),
-        ("Point F1", [row.point_f1 for row in rows], "#7C3AED"),
+        ("Model quality", [row.model_quality for row in rows], "#7C3AED"),
+        ("Component F1", [row.component_f1 for row in rows], "#9333EA"),
+        ("Fact coverage", [row.fact_coverage for row in rows], "#F97316"),
+        ("Value F1", [row.value_f1 for row in rows], "#14B8A6"),
         ("Series F1", [row.series_f1 for row in rows], "#0F766E"),
         ("X label F1", [row.x_label_f1 for row in rows], "#475569"),
-        ("Under extraction", [row.under_extraction for row in rows], "#DC2626"),
     ]
 
     figure_height = max(5.6, 0.78 * len(metrics) + 2.2)
