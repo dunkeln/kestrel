@@ -152,3 +152,6 @@ Rules:
 - Respect `.gitignore`; generated artifacts, local env files, caches, and downloaded models should stay untracked.
 - Avoid destructive git commands.
 - Keep edits minimal and explicit.
+
+> [!IMPORTANT]
+> Log learnt failures or successful steps from runpod into `RUNPOD_GUIDE.md` and reference it on consecutive runs in runpod.

@@ -6,7 +6,7 @@ Judge-VLM capable of judging other VLMs' outputs on chart reasoning.
 ## Benchmarks & Datasets
 
 + ChartQA — 20K+ charts, question-answer pairs, strong ground truth
-+ PlotQA — 28M synthetic QA pairs on plots
++ PlotQA — synthetic plot charts used here as structure extraction supervision
 + FigureQA — yes/no questions on scientific figures
 + ChartBench — specifically for chart understanding evaluation
 + MMC-Benchmark — multi-task chart comprehension
@@ -16,6 +16,12 @@ Judge-VLM capable of judging other VLMs' outputs on chart reasoning.
 Current typed exact-match accuracy across 256 normalized test samples per benchmark, using the pretrained Qwen-VL base model.
 
 ![Qwen-VL wide bench accuracy](assets/wide_bench_accuracy.png)
+
+PlotQA is different from the other QA-style benchmarks in this repo. The bench asks the model to serialize the chart into a canonical structure of series names, x/category labels, and numeric point values, then scores parsed facts with precision, recall, and F1.
+
+![PlotQA structured extraction breakdown](assets/plotqa_breakdown_base_256.png)
+
+The current pretrained Qwen-VL base result shows a structured-output failure mode: prediction parse rate is low, point/series/x-label F1 are near zero, and under-extraction is high. This means the model is usually not emitting enough valid PlotQA chart facts, so PlotQA should be treated as an alignment/SFT target rather than a normal exact-match QA benchmark.
 
 ### Dataset Contract
 

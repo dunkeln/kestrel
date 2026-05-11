@@ -20,6 +20,11 @@ from rich.table import Table
 
 from inference.contracts import InferenceRequest, InferenceResult
 from inference.backends.pytorch_qwenvl import QwenVlBackend
+from bench.plotqa_report import (
+    classify_plotqa_record,
+    render_plotqa_classification_report,
+)
+from bench.scorers import score_prediction
 from training.datasets.contracts import AnswerType, EvalSample
 from training.datasets.images import (
     MissingSampleImageError,
@@ -45,13 +50,6 @@ class BenchReporter(Protocol):
 
 
 @dataclass(frozen=True)
-class Score:
-    correct: bool
-    expected: str
-    actual: str
-
-
-@dataclass(frozen=True)
 class BenchRecord:
     sample_id: str
     dataset: str
@@ -59,6 +57,7 @@ class BenchRecord:
     gold: str
     prediction: str
     correct: bool
+    score: float
     latency_ms: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -68,7 +67,9 @@ class BenchSummary:
     total: int
     correct: int
     accuracy: float
+    average_score: float
     average_latency_ms: float | None = None
+    records: tuple[BenchRecord, ...] = ()
 
 
 def run_bench(
@@ -131,10 +132,12 @@ def run_samples(
                     gold=sample.answer,
                     prediction=result.prediction,
                     correct=score.correct,
+                    score=score.score,
                     latency_ms=_latency_ms(result.metadata),
                     metadata={
                         "chart_type": sample.chart_type,
                         "task_type": sample.task_type,
+                        "score": score.metadata,
                         "result": result.metadata,
                     },
                 )
@@ -172,20 +175,10 @@ def resolve_sample_image(
     return resolve_dataset_sample_image(sample, dataset_root=dataset_root)
 
 
-def score_prediction(
-    *,
-    answer_type: AnswerType,
-    gold: str,
-    prediction: str,
-) -> Score:
-    expected = _normalize_by_type(answer_type, gold)
-    actual = _normalize_by_type(answer_type, prediction)
-    return Score(correct=expected == actual, expected=expected, actual=actual)
-
-
 def summarize(records: list[BenchRecord]) -> BenchSummary:
     total = len(records)
     correct = sum(record.correct for record in records)
+    total_score = sum(record.score for record in records)
     latencies = [
         record.latency_ms for record in records if record.latency_ms is not None
     ]
@@ -193,37 +186,10 @@ def summarize(records: list[BenchRecord]) -> BenchSummary:
         total=total,
         correct=correct,
         accuracy=correct / total if total else 0.0,
+        average_score=total_score / total if total else 0.0,
         average_latency_ms=sum(latencies) / len(latencies) if latencies else None,
+        records=tuple(records),
     )
-
-
-def _normalize_by_type(answer_type: AnswerType, value: str) -> str:
-    if answer_type == "numeric":
-        return _normalize_numeric(value)
-    if answer_type == "yes_no":
-        return _normalize_yes_no(value)
-    return _normalize_text(value)
-
-
-def _normalize_numeric(value: str) -> str:
-    text = str(value).strip().replace(",", "").rstrip("%")
-    try:
-        return str(float(text))
-    except ValueError:
-        return _normalize_text(value)
-
-
-def _normalize_yes_no(value: str) -> str:
-    text = _normalize_text(value)
-    if text == "true":
-        return "yes"
-    if text == "false":
-        return "no"
-    return text
-
-
-def _normalize_text(value: str) -> str:
-    return " ".join(str(value).strip().lower().strip(" \t\r\n.!?").split())
 
 
 def _latency_ms(metadata: dict[str, Any]) -> float | None:
@@ -314,11 +280,38 @@ def render_summary(
     table.add_row("total", str(summary.total))
     table.add_row("correct", str(summary.correct))
     table.add_row("accuracy", f"{summary.accuracy:.2%}")
+    table.add_row("avg score", f"{summary.average_score:.3f}")
     if summary.average_latency_ms is not None:
         table.add_row("avg latency", f"{summary.average_latency_ms:.1f} ms")
     if output_path is not None:
         table.add_row("records", str(output_path))
     console.print(Panel(table, title="bench summary", expand=False))
+
+
+def render_dataset_report(
+    *,
+    console: Console,
+    dataset: str,
+    summary: BenchSummary,
+    output_path: Path | None,
+) -> None:
+    if dataset != "plotqa":
+        return
+
+    classified = [
+        classify_plotqa_record(
+            score=record.score,
+            metadata=record.metadata.get("score", {}),
+            prediction=record.prediction,
+        )
+        for record in summary.records
+    ]
+    title = str(output_path) if output_path is not None else "current run"
+    render_plotqa_classification_report(
+        console=console,
+        records=classified,
+        title=title,
+    )
 
 
 @click.command()
@@ -367,6 +360,12 @@ def main(
         reporter=reporter,
     )
     render_summary(console=console, summary=summary, output_path=output_path)
+    render_dataset_report(
+        console=console,
+        dataset=dataset,
+        summary=summary,
+        output_path=output_path,
+    )
 
 
 def _resolve_sample_limit(samples: int | None, all_samples: bool) -> int | None:

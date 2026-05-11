@@ -1,20 +1,26 @@
 from pathlib import Path
 from io import BytesIO
+from io import StringIO
 import tarfile
 import zipfile
 
 import click
 import pytest
 from PIL import Image
+from rich.console import Console
 
 from inference.contracts import InferenceRequest, InferenceResult
 from training.datasets.contracts import EvalSample
 from training.datasets import images as dataset_images
+from training.datasets.loaders import _adapt_plotqa
 
 from bench.bench import (
+    BenchRecord,
+    BenchSummary,
     MissingSampleImageError,
     _resolve_sample_limit,
     request_from_sample,
+    render_dataset_report,
     resolve_sample_image,
     run_bench,
     score_prediction,
@@ -154,6 +160,27 @@ def test_request_from_sample_uses_sample_specific_system_prompt():
     assert request.metadata["task_type"] == "value_extraction"
 
 
+def test_plotqa_sample_prompt_includes_serialized_schema():
+    sample = _adapt_plotqa(
+        {
+            "image": "plot.png",
+            "text": "<s><s_y>1</s_y><s_x>0</s_x><s_name>A</s_name></s>",
+        },
+        source_index=0,
+    )
+
+    request = request_from_sample(sample)
+
+    assert "<s_y>" in request.prompt
+    assert "<s_x>" in request.prompt
+    assert "<s_name>" in request.prompt
+    assert "horizontal bar charts" in request.prompt
+    assert "Use actual values read from the chart only." in request.prompt
+    assert "Do not output placeholders" in request.prompt
+    assert "Do not output explanations" in request.prompt
+    assert request.system_prompt == "Extract the chart structure in the requested serialized format."
+
+
 def test_resolve_sample_image_finds_dataset_artifact_path(tmp_path: Path):
     image_path = tmp_path / "chartbench" / "data" / "test" / "area" / "chart.png"
     image_path.parent.mkdir(parents=True)
@@ -275,7 +302,9 @@ def test_run_bench_streams_loader_batches_with_fake_model(monkeypatch, tmp_path:
     assert summary.total == 2
     assert summary.correct == 2
     assert summary.accuracy == 1.0
+    assert summary.average_score == 1.0
     assert summary.average_latency_ms == 10
+    assert [record.sample_id for record in summary.records] == ["s1", "s2"]
     assert FakeLoader.calls == [
         {
             "dataset_name": "chartqa",
@@ -326,6 +355,59 @@ def test_run_bench_samples_limit_applies_to_normalized_samples(monkeypatch):
     assert summary.total == 2
     assert ExpandingFakeLoader.batch_calls == [{"offset": 0, "limit": None}]
     assert [request.sample_id for request in model.requests] == ["s1", "s2"]
+
+
+def test_render_dataset_report_prints_plotqa_classification_report():
+    output = StringIO()
+    console = Console(file=output, width=220)
+    summary = BenchSummary(
+        total=1,
+        correct=0,
+        accuracy=0.0,
+        average_score=0.0,
+        records=(
+            BenchRecord(
+                sample_id="plotqa:1",
+                dataset="plotqa",
+                answer_type="structure",
+                gold="<s><s_x>0</s_x><s_y>1</s_y><s_name>A</s_name></s>",
+                prediction="<s><series><sep/></series></s>",
+                correct=False,
+                score=0.0,
+                metadata={
+                    "score": {
+                        "plotqa_gold_parse_ok": True,
+                        "plotqa_prediction_parse_ok": False,
+                        "plotqa_exact_match": False,
+                        "plotqa_point_precision": 0.0,
+                        "plotqa_point_recall": 0.0,
+                        "plotqa_point_f1": 0.0,
+                        "plotqa_series_precision": 0.0,
+                        "plotqa_series_recall": 0.0,
+                        "plotqa_series_f1": 0.0,
+                        "plotqa_x_label_precision": 0.0,
+                        "plotqa_x_label_recall": 0.0,
+                        "plotqa_x_label_f1": 0.0,
+                        "plotqa_count_match": 0.0,
+                        "plotqa_gold_facts": 1,
+                        "plotqa_predicted_facts": 0,
+                    }
+                },
+            ),
+        ),
+    )
+
+    render_dataset_report(
+        console=console,
+        dataset="plotqa",
+        summary=summary,
+        output_path=None,
+    )
+
+    rendered = output.getvalue()
+    assert "PlotQA Classification Report" in rendered
+    assert "prediction parse" in rendered
+    assert "unparsed_schema_variant" in rendered
 
 
 def test_resolve_sample_limit_requires_exactly_one_mode():
@@ -383,6 +465,145 @@ def test_score_prediction_uses_typed_normalized_exact_match():
         gold="12",
         prediction="13",
     ).correct
+
+
+def test_score_prediction_scores_plotqa_structure_facts():
+    gold = (
+        "<s><s_x>2010<sep/>2011</s_x><s_y>12.0<sep/>14.0</s_y>"
+        "<s_name>Revenue</s_name></s>"
+    )
+    prediction = (
+        "<s><s_name>revenue</s_name><s_x>2010<sep/>2011</s_x>"
+        "<s_y>12<sep/>14</s_y></s>"
+    )
+
+    score = score_prediction(
+        answer_type="structure",
+        gold=gold,
+        prediction=prediction,
+    )
+
+    assert score.correct is True
+    assert score.score == 1.0
+    assert score.metadata["plotqa_point_f1"] == 1.0
+
+
+def test_score_prediction_gives_plotqa_partial_credit():
+    gold = (
+        "<s><s_x>2010<sep/>2011</s_x><s_y>12.0<sep/>14.0</s_y>"
+        "<s_name>Revenue</s_name></s>"
+    )
+    prediction = (
+        "<s><s_x>2010<sep/>2011</s_x><s_y>12.0<sep/>99.0</s_y>"
+        "<s_name>Revenue</s_name></s>"
+    )
+
+    score = score_prediction(
+        answer_type="structure",
+        gold=gold,
+        prediction=prediction,
+    )
+
+    assert score.correct is False
+    assert 0.0 < score.score < 1.0
+    assert score.metadata["plotqa_point_precision"] == 0.5
+    assert score.metadata["plotqa_point_recall"] == 0.5
+    assert score.metadata["plotqa_point_f1"] == 0.5
+
+
+def test_score_prediction_ignores_plotqa_bbox_tags():
+    gold = (
+        "<s><s_y>10<sep/>20</s_y><s_x>0<sep/>1</s_x>"
+        "<s_name>Revenue</s_name><s_bboxes><s_y>100</s_y><s_x>200</s_x>"
+        "<s_w>10</s_w><s_h>10</s_h><sep/><s_y>80</s_y><s_x>300</s_x>"
+        "<s_w>10</s_w><s_h>10</s_h></s_bboxes><sep/>"
+        "<s_y>7<sep/>8</s_y><s_x>0<sep/>1</s_x><s_name>Cost</s_name>"
+        "<s_bboxes><s_y>120</s_y><s_x>200</s_x><s_w>10</s_w><s_h>10</s_h>"
+        "</s_bboxes></s>"
+    )
+    prediction = (
+        "<s><s_y>10<sep/>20</s_y><s_x>0<sep/>1</s_x>"
+        "<s_name>Revenue</s_name><sep/><s_y>7<sep/>8</s_y>"
+        "<s_x>0<sep/>1</s_x><s_name>Cost</s_name></s>"
+    )
+
+    score = score_prediction(
+        answer_type="structure",
+        gold=gold,
+        prediction=prediction,
+    )
+
+    assert score.correct is True
+    assert score.metadata["plotqa_gold_series"] == 2
+    assert score.metadata["plotqa_predicted_series"] == 2
+
+
+def test_score_prediction_handles_plotqa_horizontal_bar_structure():
+    gold = (
+        "<s><s_y>Uganda<sep/>Ukraine</s_y><s_x>67.1<sep/>41.3</s_x>"
+        "<s_name>1990</s_name><s_bboxes><s_y>548</s_y><s_x>172</s_x>"
+        "<s_w>649</s_w><s_h>32</s_h></s_bboxes></s>"
+    )
+    prediction = (
+        "<s><s_y>Uganda<sep/>Ukraine</s_y><s_x>67.1<sep/>41.3</s_x>"
+        "<s_name>1990</s_name></s>"
+    )
+
+    score = score_prediction(
+        answer_type="structure",
+        gold=gold,
+        prediction=prediction,
+    )
+
+    assert score.correct is True
+    assert score.metadata["plotqa_gold_series"] == 1
+    assert score.metadata["plotqa_point_f1"] == 1.0
+
+
+def test_score_prediction_accepts_unambiguous_plotqa_series_variant():
+    gold = (
+        "<s><s_x>2010<sep/>2011</s_x><s_y>12.0<sep/>14.0</s_y>"
+        "<s_name>Revenue</s_name></s>"
+    )
+    prediction = '<series name="Revenue" x="2010 2011" y="12 14" />'
+
+    score = score_prediction(
+        answer_type="structure",
+        gold=gold,
+        prediction=prediction,
+    )
+
+    assert score.correct is True
+    assert score.score == 1.0
+    assert score.metadata["plotqa_series_precision"] == 1.0
+    assert score.metadata["plotqa_series_recall"] == 1.0
+    assert score.metadata["plotqa_x_label_precision"] == 1.0
+    assert score.metadata["plotqa_x_label_recall"] == 1.0
+    assert score.metadata["plotqa_point_precision"] == 1.0
+    assert score.metadata["plotqa_point_recall"] == 1.0
+    assert score.metadata["plotqa_prediction_parse_ok"] is True
+    assert score.metadata["plotqa_exact_match"] is False
+
+
+def test_score_prediction_rejects_plotqa_placeholders():
+    gold = (
+        "<s><s_x>2010<sep/>2011</s_x><s_y>12.0<sep/>14.0</s_y>"
+        "<s_name>Revenue</s_name></s>"
+    )
+    prediction = (
+        "<s><s_x>x1<sep/>x2</s_x><s_y>y1<sep/>y2</s_y>"
+        "<s_name>Revenue</s_name></s>"
+    )
+
+    score = score_prediction(
+        answer_type="structure",
+        gold=gold,
+        prediction=prediction,
+    )
+
+    assert score.correct is False
+    assert score.score == 0.0
+    assert score.metadata["plotqa_prediction_parse_ok"] is False
 
 
 def _png_bytes() -> bytes:

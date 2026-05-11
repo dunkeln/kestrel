@@ -53,3 +53,6 @@ notebook.py
 .DS_Store
 .idea/
 .vscode/
+
+NOTES.md
+RUNPOD_GUIDE.md

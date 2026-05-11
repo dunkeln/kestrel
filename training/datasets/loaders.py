@@ -80,6 +80,21 @@ ANSWER_TYPE_SYSTEM_PROMPTS = {
     "text": DEFAULT_SYSTEM_PROMPT,
 }
 
+PLOTQA_STRUCTURE_PROMPT = (
+    "Extract the chart data as PlotQA XML-like tags. "
+    "Return one series block per chart series using only these tags: "
+    "<s>, <s_y>, <s_x>, <s_name>, and <sep/>. "
+    "Use actual values read from the chart only. "
+    "Separate repeated values with <sep/>. "
+    "For vertical bar and line charts, put numeric values in <s_y> "
+    "and x labels or zero-based x positions in <s_x>. "
+    "For horizontal bar charts, put category labels in <s_y> "
+    "and numeric values in <s_x>. "
+    "Use the visible legend or series label in <s_name>. "
+    "Do not output placeholders such as y1, y2, x1, x2, or series name. "
+    "Do not output explanations, markdown, or any other tags."
+)
+
 
 def _system_prompt(task_type=None, answer_type=None):
     if task_type in TASK_SYSTEM_PROMPTS:
@@ -209,7 +224,7 @@ def _adapt_plotqa(row, source_index):
         id=f"plotqa:{source_id}",
         dataset="plotqa",
         image=row["image"],
-        question="Extract the chart structure.",
+        question=PLOTQA_STRUCTURE_PROMPT,
         answer=row["text"],
         answer_type="structure",
         supervision="structure",
