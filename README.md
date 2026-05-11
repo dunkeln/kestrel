@@ -13,13 +13,13 @@ Judge-VLM capable of judging other VLMs' outputs on chart reasoning.
 
 ### Current Pretrained Qwen-VL Bench
 
-Current typed exact-match accuracy across 256 normalized test samples per benchmark, using the pretrained Qwen-VL base model.
+Current typed exact-match accuracy across 256 normalized test samples per benchmark, comparing pretrained Qwen-VL base model sizes.
 
-![Qwen-VL wide bench accuracy](assets/wide_bench_accuracy.png)
+![Qwen-VL base model size wide bench accuracy](assets/runpod_base_model_size_wide_bench_accuracy.png)
 
 PlotQA is different from the other QA-style benchmarks in this repo. The bench asks the model to serialize the chart into a canonical structure of series names, x/category labels, and numeric point values, then scores parsed facts with precision, recall, and F1.
 
-![PlotQA structured extraction breakdown](assets/plotqa_breakdown_base_256.png)
+![PlotQA structured extraction breakdown by model size](assets/runpod_base_model_size_plotqa_breakdown.png)
 
 The current pretrained Qwen-VL base result shows a structured-output failure mode: prediction parse rate is low, point/series/x-label F1 are near zero, and under-extraction is high. This means the model is usually not emitting enough valid PlotQA chart facts, so PlotQA should be treated as an alignment/SFT target rather than a normal exact-match QA benchmark.
 

@@ -17,7 +17,7 @@ DEFAULT_ARTIFACT_PATH = Path("artifacts/pretrained")
 def load_model(size="tiny", artifact_path=DEFAULT_ARTIFACT_PATH, precision="auto"):
     model_map = {
         "tiny": "Qwen/Qwen2-VL-2B-Instruct",
-        "small": "Qwen/Qwen2-VL-3B-Instruct",
+        "small": "Qwen/Qwen2.5-VL-3B-Instruct",
         "aight": "Qwen/Qwen2-VL-7B-Instruct",
     }
     size = size.lower()

@@ -8,7 +8,7 @@ from inference.contracts import InferenceConfig, ModelSpec, Precision
 MODEL_IDS = {
     "qwen_vl": {
         "tiny": "Qwen/Qwen2-VL-2B-Instruct",
-        "small": "Qwen/Qwen2-VL-3B-Instruct",
+        "small": "Qwen/Qwen2.5-VL-3B-Instruct",
         "aight": "Qwen/Qwen2-VL-7B-Instruct",
     }
 }

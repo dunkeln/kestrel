@@ -129,7 +129,7 @@ model_sizes:
     model_id: Qwen/Qwen2-VL-2B-Instruct
   small:
     config_size: small
-    model_id: Qwen/Qwen2-VL-3B-Instruct
+    model_id: Qwen/Qwen2.5-VL-3B-Instruct
   aight:
     config_size: aight
     model_id: Qwen/Qwen2-VL-7B-Instruct
