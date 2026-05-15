@@ -155,13 +155,13 @@ batch = list(loader.batch(offset=0, limit=32))
 Generate deterministic per-benchmark JSONL training artifacts under `artifacts/train_data/`:
 
 ```bash
-uv run python -m training.sft.generate --dataset chartqa --split train --samples 1000
+uv run python -m training.distillation.generate --dataset chartqa --split train --samples 1000
 ```
 
 Use provider-native batch mode for cheaper offline teacher and synthesis calls:
 
 ```bash
-uv run python -m training.sft.generate --dataset chartqa --split train --samples 1000 --batch-size 32 --provider-mode batch
+uv run python -m training.distillation.generate --dataset chartqa --split train --samples 1000 --batch-size 32 --provider-mode batch
 ```
 
 `--provider-mode batch` submits one Anthropic teacher batch, one OpenAI teacher batch, and one Anthropic synthesis batch per local stream batch. Keep `sync` mode for smoke tests and short interactive runs.

@@ -42,7 +42,12 @@ artifacts/train_data/*
 outputs/
 checkpoints/
 runs/
+
+# MLflow runtime state
+mlflow.db
+*mlflow*.db
 mlruns/
+artifacts/mlflow/
 
 # Logs
 *.log

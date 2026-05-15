@@ -4,19 +4,24 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from training.datasets.contracts import EvalSample
-from training.sft.reasoning_pipeline import PipelineConfig
-from training.sft.reasoning_synthesis import build_synthesis_prompt, lint_synthesis
-from training.sft.teacher_ensemble import (
-    CLAUDE_ADJUDICATION_MODEL,
-    CLAUDE_SYNTHESIS_MODEL,
-    CLAUDE_TEACHER_MODEL,
+from training.distillation.pipeline import PipelineConfig
+from training.distillation.prompts import (
     CONSTITUTIONAL_CONSTRAINT,
-    OPENAI_MODEL,
     STAGE1_COMPUTE_REASONING_PROMPT,
     STAGE1_REASONING_PROMPT,
     build_stage_prompt,
+    build_synthesis_prompt,
+)
+from training.distillation.providers import (
+    CLAUDE_ADJUDICATION_MODEL,
+    CLAUDE_SYNTHESIS_MODEL,
+    CLAUDE_TEACHER_MODEL,
+    OPENAI_MODEL,
+)
+from training.distillation.validation import (
     contest,
     dissenting_providers,
+    lint_synthesis,
     retry_prompt,
     stage1_requires_compute,
     validate_reasoning,

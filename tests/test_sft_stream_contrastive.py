@@ -7,8 +7,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PIL import Image
 
 from training.datasets.contracts import EvalSample
-from training.sft.contrastive import build_contrastive_record, should_emit_contrastive
-from training.sft.sample_stream import StreamConfig, iter_sample_batches
+from training.distillation.contrastive import build_contrastive_record, should_emit_contrastive
+from training.distillation.sample_stream import StreamConfig, iter_sample_batches
 
 
 def test_stream_batches_honor_samples_batch_size_and_shuffle_seed():

@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import random
+import json
+import logging
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from itertools import islice
 
 from training.datasets.contracts import EvalSample
 from training.datasets.loaders import DatasetLoader
-from training.sft.progress import log_event
 
 
 LoaderFactory = Callable[..., DatasetLoader]
 LOG_EVERY_BATCHES = 10
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -40,7 +42,7 @@ def iter_sample_batches(
     if config.samples is None and not config.all_samples:
         raise ValueError("set samples or all_samples")
 
-    log_event(
+    _log_event(
         "sample_stream_start",
         dataset=config.dataset,
         split=config.split,
@@ -77,7 +79,7 @@ def iter_sample_batches(
             _log_batch_progress(total_samples, total_batches)
             yield batch
     finally:
-        log_event(
+        _log_event(
             "sample_stream_complete",
             total_samples_processed=total_samples,
             total_batches_yielded=total_batches,
@@ -86,7 +88,7 @@ def iter_sample_batches(
 
 def _log_batch_progress(total_samples: int, total_batches: int) -> None:
     if total_batches == 1 or total_batches % LOG_EVERY_BATCHES == 0:
-        log_event(
+        _log_event(
             "sample_stream_progress",
             total_samples_processed=total_samples,
             total_batches_yielded=total_batches,
@@ -118,4 +120,5 @@ def _shuffle_buffer(
         yield buffer.pop(index)
 
 
-__all__ = ["StreamConfig", "iter_sample_batches"]
+def _log_event(event: str, **fields) -> None:
+    logger.info(json.dumps({"event": event, **fields}, sort_keys=True))

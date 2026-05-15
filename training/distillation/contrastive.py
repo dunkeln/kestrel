@@ -6,7 +6,7 @@ import math
 import re
 from typing import Any
 
-from training.sft.keys import attach_record_key
+from training.distillation.storage import attach_record_key
 
 
 ANSWER_RE = re.compile(r"(<answer>)(.*?)(</answer>)", flags=re.DOTALL | re.IGNORECASE)
@@ -126,7 +126,7 @@ def _candidate_values(metadata: dict[str, Any]) -> list[str]:
         return []
     raw = source.get("options") or source.get("choices") or source.get("candidates")
     if isinstance(raw, dict):
-        return [str(key) for key in raw.keys()]
+        return sorted(str(key) for key in raw.keys())
     if isinstance(raw, list | tuple):
         return [str(value) for value in raw]
     return []
@@ -146,12 +146,12 @@ def _replace_answer(output: str, answer: str) -> str | None:
 
 def _record_key(record: dict[str, Any], seed: int | None) -> str:
     metadata = record.get("metadata", {})
+    key = record.get("record_key") or metadata.get("record_key")
+    if key:
+        return f"{seed or 0}:{key}"
     return f"{seed or 0}:{metadata.get('dataset')}:{metadata.get('sample_id')}"
 
 
 def _stable_index(value: str, seed: int | None, size: int) -> int:
     key = f"{seed or 0}:{value}"
     return int(hashlib.sha256(key.encode("utf-8")).hexdigest()[:8], 16) % size
-
-
-__all__ = ["build_contrastive_record", "should_emit_contrastive"]

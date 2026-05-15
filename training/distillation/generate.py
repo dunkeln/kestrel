@@ -9,7 +9,7 @@ from typing import Any
 import click
 from rich.console import Console
 
-from training.sft.generation_runner import run_generation
+from training.distillation.pipeline import run_generation
 
 
 logger = logging.getLogger(__name__)

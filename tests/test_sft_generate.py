@@ -10,9 +10,8 @@ from PIL import Image
 from rich.console import Console
 
 from training.datasets.contracts import EvalSample
-from training.sft.generate import main
-from training.sft.generation_runner import run_generation
-from training.sft.reasoning_pipeline import SampleResult
+from training.distillation.generate import main
+from training.distillation.pipeline import SampleResult, run_generation
 
 
 def test_cli_requires_exactly_one_size_option():

@@ -6,9 +6,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PIL import Image
 
-from training.sft.provider_batch_contracts import ProviderBatchResult
-from training.sft.provider_batch_pipeline import process_batch_provider_batched
-from training.sft.reasoning_pipeline import PipelineConfig
+from training.distillation.pipeline import PipelineConfig, process_batch_provider_batched
+from training.distillation.providers import (
+    CLAUDE_ADJUDICATION_MODEL,
+    CLAUDE_SYNTHESIS_MODEL,
+    CLAUDE_TEACHER_MODEL,
+    OPENAI_MODEL,
+    ProviderBatchResult,
+)
 
 
 def test_provider_batch_pipeline_uses_batched_teacher_and_synthesis_calls(tmp_path):
@@ -17,7 +22,7 @@ def test_provider_batch_pipeline_uses_batched_teacher_and_synthesis_calls(tmp_pa
     calls = []
 
     async def anthropic_batch(requests, *, poll_interval_seconds, label):
-        calls.append(("anthropic", label, len(requests)))
+        calls.append(("anthropic", label, len(requests), [request.model for request in requests]))
         return {
             request.custom_id: ProviderBatchResult(
                 request.custom_id,
@@ -28,7 +33,7 @@ def test_provider_batch_pipeline_uses_batched_teacher_and_synthesis_calls(tmp_pa
         }
 
     async def openai_batch(requests, *, poll_interval_seconds, label):
-        calls.append(("openai", label, len(requests)))
+        calls.append(("openai", label, len(requests), [request.model for request in requests]))
         return {
             request.custom_id: ProviderBatchResult(
                 request.custom_id,
@@ -62,9 +67,9 @@ def test_provider_batch_pipeline_uses_batched_teacher_and_synthesis_calls(tmp_pa
     assert results[0].metadata["provider_batch"] is True
     assert results[0].agreed_output == "yes"
     assert calls == [
-        ("anthropic", "teacher_claude", 1),
-        ("openai", "teacher_openai", 1),
-        ("anthropic", "synthesis_attempt_1", 1),
+        ("anthropic", "teacher_claude", 1, [CLAUDE_TEACHER_MODEL]),
+        ("openai", "teacher_openai", 1, [OPENAI_MODEL]),
+        ("anthropic", "synthesis_attempt_1", 1, [CLAUDE_SYNTHESIS_MODEL]),
     ]
 
 
@@ -74,7 +79,7 @@ def test_provider_batch_pipeline_adjudicates_plotqa_numeric_disagreement(tmp_pat
     calls = []
 
     async def anthropic_batch(requests, *, poll_interval_seconds, label):
-        calls.append(("anthropic", label, len(requests)))
+        calls.append(("anthropic", label, len(requests), [request.model for request in requests]))
         return {
             request.custom_id: ProviderBatchResult(
                 request.custom_id,
@@ -85,7 +90,7 @@ def test_provider_batch_pipeline_adjudicates_plotqa_numeric_disagreement(tmp_pat
         }
 
     async def openai_batch(requests, *, poll_interval_seconds, label):
-        calls.append(("openai", label, len(requests)))
+        calls.append(("openai", label, len(requests), [request.model for request in requests]))
         return {
             request.custom_id: ProviderBatchResult(
                 request.custom_id,
@@ -122,9 +127,14 @@ def test_provider_batch_pipeline_adjudicates_plotqa_numeric_disagreement(tmp_pat
     assert results[0].metadata["adjudicator_model"] == "claude-haiku-4-5"
     assert "<compute>" in results[0].sft_record["output"]
     assert calls == [
-        ("anthropic", "teacher_claude", 1),
-        ("openai", "teacher_openai", 1),
-        ("anthropic", "plotqa_numeric_adjudication_attempt_1", 1),
+        ("anthropic", "teacher_claude", 1, [CLAUDE_TEACHER_MODEL]),
+        ("openai", "teacher_openai", 1, [OPENAI_MODEL]),
+        (
+            "anthropic",
+            "plotqa_numeric_adjudication_attempt_1",
+            1,
+            [CLAUDE_ADJUDICATION_MODEL],
+        ),
     ]
 
 
