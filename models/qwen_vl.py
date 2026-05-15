@@ -6,7 +6,7 @@ from accelerate import Accelerator
 from dotenv import find_dotenv, load_dotenv
 from huggingface_hub import snapshot_download
 from rich.console import Console
-from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
+from transformers import AutoModelForImageTextToText, AutoProcessor
 
 load_dotenv(find_dotenv())
 
@@ -35,7 +35,7 @@ def load_model(size="tiny", artifact_path=DEFAULT_ARTIFACT_PATH, precision="auto
             local_dir=model_path,
         )
 
-    model = Qwen2VLForConditionalGeneration.from_pretrained(
+    model = AutoModelForImageTextToText.from_pretrained(
         model_path,
         dtype=dtype,
         device_map="auto",

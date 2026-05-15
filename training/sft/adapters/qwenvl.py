@@ -6,54 +6,94 @@ from typing import Any
 from peft import LoraConfig
 
 QWEN2_VL_2B = "Qwen/Qwen2-VL-2B-Instruct"
-QWEN2_VL_2B_VISION_TARGETS = [
-    f"model.visual.blocks.{layer}.attn.{module}"
-    for layer in range(32)
-    for module in ("qkv", "proj")
-]
-QWEN2_VL_2B_LANGUAGE_TARGETS = [
-    f"model.language_model.layers.{layer}.self_attn.{module}"
-    for layer in range(28)
-    for module in ("q_proj", "k_proj", "v_proj", "o_proj")
-]
+QWEN2_5_VL_3B = "Qwen/Qwen2.5-VL-3B-Instruct"
+QWEN2_VL_7B = "Qwen/Qwen2-VL-7B-Instruct"
 
-QWEN2_VL_2B_VISION_LORA = LoraConfig(
-    target_modules=QWEN2_VL_2B_VISION_TARGETS,
-    r=16,
-    lora_alpha=16,
-    lora_dropout=0.05,
-    bias="none",
-)
 
-QWEN2_VL_2B_LANGUAGE_LORA = LoraConfig(
-    target_modules=QWEN2_VL_2B_LANGUAGE_TARGETS,
-    r=32,
-    lora_alpha=64,
-    lora_dropout=0.05,
-    bias="none",
-)
+def _vision_targets(depth: int) -> list[str]:
+    return [
+        f"model.visual.blocks.{layer}.attn.{module}"
+        for layer in range(depth)
+        for module in ("qkv", "proj")
+    ]
 
-QWEN2_VL_2B_MIXED_LORA = LoraConfig(
-    target_modules=QWEN2_VL_2B_VISION_TARGETS + QWEN2_VL_2B_LANGUAGE_TARGETS,
-    r=32,
-    lora_alpha=64,
-    lora_dropout=0.05,
-    bias="none",
-    rank_pattern={target: 16 for target in QWEN2_VL_2B_VISION_TARGETS},
-    alpha_pattern={target: 16 for target in QWEN2_VL_2B_VISION_TARGETS},
-)
+
+def _language_targets(depth: int) -> list[str]:
+    return [
+        f"model.language_model.layers.{layer}.self_attn.{module}"
+        for layer in range(depth)
+        for module in ("q_proj", "k_proj", "v_proj", "o_proj")
+    ]
+
+
+def _mixed_lora(vision_targets: list[str], language_targets: list[str], *, vision_rank: int, language_rank: int) -> LoraConfig:
+    return LoraConfig(
+        target_modules=vision_targets + language_targets,
+        r=language_rank,
+        lora_alpha=language_rank * 2,
+        lora_dropout=0.05,
+        bias="none",
+        rank_pattern={target: vision_rank for target in vision_targets},
+        alpha_pattern={target: vision_rank for target in vision_targets},
+    )
+
+
+def _config(model_id: str, *, vision_depth: int, language_depth: int, vision_rank: int, language_rank: int) -> dict[str, Any]:
+    vision_targets = _vision_targets(vision_depth)
+    language_targets = _language_targets(language_depth)
+    vision = LoraConfig(
+        target_modules=vision_targets,
+        r=vision_rank,
+        lora_alpha=vision_rank,
+        lora_dropout=0.05,
+        bias="none",
+    )
+    language = LoraConfig(
+        target_modules=language_targets,
+        r=language_rank,
+        lora_alpha=language_rank * 2,
+        lora_dropout=0.05,
+        bias="none",
+    )
+    return {
+        "model_id": model_id,
+        "targets": {
+            "vision": vision_targets,
+            "language": language_targets,
+        },
+        "vision": vision,
+        "language": language,
+        "train": _mixed_lora(
+            vision_targets,
+            language_targets,
+            vision_rank=vision_rank,
+            language_rank=language_rank,
+        ),
+    }
+
 
 QWENVL_LORA_CONFIGS = {
-    "tiny": {
-        "model_id": QWEN2_VL_2B,
-        "targets": {
-            "vision": QWEN2_VL_2B_VISION_TARGETS,
-            "language": QWEN2_VL_2B_LANGUAGE_TARGETS,
-        },
-        "vision": QWEN2_VL_2B_VISION_LORA,
-        "language": QWEN2_VL_2B_LANGUAGE_LORA,
-        "train": QWEN2_VL_2B_MIXED_LORA,
-    }
+    "tiny": _config(
+        QWEN2_VL_2B,
+        vision_depth=32,
+        language_depth=28,
+        vision_rank=16,
+        language_rank=32,
+    ),
+    "small": _config(
+        QWEN2_5_VL_3B,
+        vision_depth=32,
+        language_depth=36,
+        vision_rank=16,
+        language_rank=32,
+    ),
+    "aight": _config(
+        QWEN2_VL_7B,
+        vision_depth=32,
+        language_depth=28,
+        vision_rank=8,
+        language_rank=16,
+    ),
 }
 
 
