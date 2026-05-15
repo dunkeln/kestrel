@@ -36,9 +36,8 @@ artifacts/*
 artifacts/evals/*
 !artifacts/evals/bench/
 !artifacts/evals/bench/*.jsonl
-!artifacts/train_data/
-artifacts/train_data/*
-!artifacts/train_data/README.md
+artifacts/train_data/
+*.svg
 outputs/
 checkpoints/
 runs/
